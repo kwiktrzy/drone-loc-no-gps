@@ -31,17 +31,17 @@ from dataset_splitter.MapSatellite import MapSatellite
 class ThumbnailsGenerator:
     def __init__(self,
                  output_dir,
-                 width_crop_count=50,
-                 height_crop_count=50,
+                 width_crop_count: int=50,
+                 height_crop_count: int=50,
                  patch_format_compress=('.png', 5),
                  is_rebuild_csv=True,
                  satellite_map_names: List[MapSatellite]=None):
         self.output_dir=output_dir
-        self.width_crop_count=width_crop_count,
-        self.height_crop_count=height_crop_count,
+        self.width_crop_count=width_crop_count
+        self.height_crop_count=height_crop_count
         self.patch_format_compress=patch_format_compress
         self.is_rebuild_csv=is_rebuild_csv
-        self.satellite_map_names = satellite_map_names
+        self.satellite_map_names: List[MapSatellite] = satellite_map_names
         self.csv_thumbnails_paths: List[str] = []
 
     def __get_map_coordinates_csv(self, csv_path, mapname):
@@ -135,10 +135,14 @@ class ThumbnailsGenerator:
                                                    map.coordinates.lt_lon,
                                                    map.coordinates.rb_lat,
                                                    map.coordinates.rb_lon)
+                dir_output=f"{self.output_dir}/{map.region_name}"
+                if(i == 0):
+                    os.makedirs(dir_output, exist_ok=True)
 
-                patch_filename = f"{self.output_dir}/{map.region_name}/patch_{gps_coords[0]}_{gps_coords[1]}_{gps_coords[2]}_{gps_coords[3]}_{uuid.uuid4().hex}{self.patch_format_compress[0]}"
+                patch_dir=f"{dir_output}/patch__{gps_coords[0]}__{gps_coords[1]}__{gps_coords[2]}__{gps_coords[3]}__{uuid.uuid4().hex}"
+                patch_dir_ext = f"{patch_dir.replace('.', '_')}{self.patch_format_compress[0]}"
                 # place_id, source
-                row = {'img_path': patch_filename,
+                row = {'img_path': patch_dir_ext,
                        'LT_lat': gps_coords[0], 'LT_lon': gps_coords[1],
                        'RB_lat': gps_coords[2], 'RB_lon': gps_coords[3],
                        'patch_width': coords[4], 'patch_height': coords[5],
@@ -149,12 +153,14 @@ class ThumbnailsGenerator:
                 self.__append_row_csv(row, map.thumbnails_satellite_csv_output_path, self.is_rebuild_csv)
 
                 if self.patch_format_compress[0] == '.png':
-                    cv2.imwrite(patch_filename, patch, [cv2.IMWRITE_PNG_COMPRESSION, self.patch_format_compress[1]])
+                    cv2.imwrite(patch_dir_ext, patch, [cv2.IMWRITE_PNG_COMPRESSION, self.patch_format_compress[1]])
                 elif self.patch_format_compress[0] == '.jpg':
-                    cv2.imwrite(patch_filename, patch, [cv2.IMWRITE_JPEG_QUALITY, self.patch_format_compress[1]])
+                    cv2.imwrite(patch_dir_ext, patch, [cv2.IMWRITE_JPEG_QUALITY, self.patch_format_compress[1]])
                 else:
                     print("OH NO...u used unsupported thumbnail format!")
                     return
+                
+                print(f"\rGenerated:{i}", end='', flush=True)
 
     def __calculate_place_id(self, csv_thumbnails_paths):
         # Assumption the regions are in the same csv file
@@ -172,6 +178,10 @@ class ThumbnailsGenerator:
             self.__crop_map(map)
             print("Processed")
 
-        self.csv_thumbnails_paths = set([obj.thumbnails_satellite_csv_output_path for obj in self.satellite_map_names])
+        self.csv_thumbnails_paths = self.get_csv_thumbnails_paths()
         self.__calculate_place_id(self.csv_thumbnails_paths)
         print("Generation thumbnails completed!")
+
+    def get_csv_thumbnails_paths(self):
+        # If we have already prepared thumbnails, we can just take csv_thumbnails_paths without requirement to generate them. 
+        return list(set([obj.thumbnails_satellite_csv_output_path for obj in self.satellite_map_names]))

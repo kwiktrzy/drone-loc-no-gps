@@ -20,11 +20,17 @@ TRAIN_DATASET_NAMES = [
 class MapsDataModule(pl.LightningDataModule):
     def __init__(self,
                  thumbnails_csv_file_paths: List[str]=None,
+                 batch_size=32,
+                 num_workers=4,
+                 shuffle_all=False,
                  mean_std=IMAGENET_MEAN_STD,
                  random_sample_from_each_place=True
                  ):
         super().__init__()
-        self.thumbnails_csv_file_paths=thumbnails_csv_file_paths
+        self.thumbnails_csv_file_paths: List[str]=thumbnails_csv_file_paths
+        self.batch_size:int=batch_size
+        self.num_workers=num_workers
+        self.shuffle_all=shuffle_all
         self.mean_dataset = mean_std['mean']
         self.std_dataset = mean_std['std']
 

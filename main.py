@@ -7,12 +7,12 @@ from vpr_model import VPRModel
 
 if __name__ == '__main__':
     thumbnails_generator = ThumbnailsGenerator(
-        output_dir='/kaggle/working/',
+        output_dir='/home/user/repos/datasets/train_thumbnails',
         satellite_map_names=[
-            MapSatellite(csv_path='/kaggle/input/uav-visloc-example/satellite_ coordinates_range.csv',
-                         thumbnails_satellite_csv_output_path='/kaggle/working/Dataframes/Taizhou-1.csv',
-                         map_tif_path='/kaggle/input/uav-visloc-example/03/satellite03.tif',
-                         map_name='03.tif',
+            MapSatellite(csv_path='/home/user/repos/datasets/UAV_VisLoc/satellite_ coordinates_range.csv',
+                         thumbnails_satellite_csv_output_path='/home/user/repos/drone-loc-no-gps/Dataframes/Taizhou-1.csv',
+                         map_tif_path='/home/user/repos/datasets/UAV_VisLoc/03/satellite03.tif',
+                         map_name='satellite03.tif',
                          region_name='Taizhou-1',
                          friendly_name='visloc-Taizhou-1-03')
         ],
@@ -20,11 +20,15 @@ if __name__ == '__main__':
         height_crop_count=50,
         width_crop_count=50
     )
-    thumbnails_generator.generate_thumbnails()
-    # TODO: think twice where is paths of pictures. We do not have validation...
+    # TODO: smart if
+    # thumbnails_generator.generate_thumbnails()
+
+    # TODO: think twice where is paths of pictures. We do not have validation...?
     # thumbnails_generator.csv_thumbnails_paths;
+    thumbnails_paths = thumbnails_generator.get_csv_thumbnails_paths()
     datamodule = MapsDataModule(
-        thumbnails_csv_file_paths=thumbnails_generator.csv_thumbnails_paths
+        thumbnails_csv_file_paths=thumbnails_paths,
+        batch_size=32
     )
 
     model = VPRModel(
@@ -61,6 +65,19 @@ if __name__ == '__main__':
         miner_margin=0.1,
         faiss_gpu=False
     )
+
+
+    # model params saving using Pytorch Lightning
+    # we save the best 3 models accoring to Recall@1 on pittsburg val
+    # checkpoint_cb = pl.callbacks.ModelCheckpoint(
+    #     monitor='pitts30k_val/R1',
+    #     filename=f'{model.encoder_arch}' + '_({epoch:02d})_R1[{pitts30k_val/R1:.4f}]_R5[{pitts30k_val/R5:.4f}]',
+    #     auto_insert_metric_name=False,
+    #     save_weights_only=True,
+    #     save_top_k=3,
+    #     save_last=True,
+    #     mode='max'
+    # )
 
     trainer = pl.Trainer(
         accelerator='gpu',
