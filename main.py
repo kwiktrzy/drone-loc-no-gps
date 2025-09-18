@@ -17,8 +17,8 @@ if __name__ == '__main__':
                          friendly_name='visloc-Taizhou-1-03')
         ],
         is_rebuild_csv=True,
-        height_crop_count=50,
-        width_crop_count=50
+        height_size=224,
+        width_size=224
     )
     # TODO: smart if
     # thumbnails_generator.generate_thumbnails()

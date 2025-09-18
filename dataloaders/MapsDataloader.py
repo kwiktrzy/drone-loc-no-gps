@@ -23,7 +23,7 @@ class MapsDataModule(pl.LightningDataModule):
                  batch_size=32,
                  num_workers=4,
                  shuffle_all=False,
-                 mean_std=IMAGENET_MEAN_STD,
+                 mean_std=VIT_MEAN_STD,
                  random_sample_from_each_place=True
                  ):
         super().__init__()

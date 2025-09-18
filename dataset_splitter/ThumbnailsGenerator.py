@@ -9,6 +9,7 @@ from rasterio.windows import Window
 import cv2
 import numpy as np
 import uuid
+import math
 
 from dataset_splitter.MapSatellite import MapSatellite
 
@@ -31,14 +32,14 @@ from dataset_splitter.MapSatellite import MapSatellite
 class ThumbnailsGenerator:
     def __init__(self,
                  output_dir,
-                 width_crop_count: int=50,
-                 height_crop_count: int=50,
+                 width_size: int=224,
+                 height_size: int=224,
                  patch_format_compress=('.png', 5),
                  is_rebuild_csv=True,
                  satellite_map_names: List[MapSatellite]=None):
         self.output_dir=output_dir
-        self.width_crop_count=width_crop_count
-        self.height_crop_count=height_crop_count
+        self.width_size=width_size
+        self.height_size=height_size
         self.patch_format_compress=patch_format_compress
         self.is_rebuild_csv=is_rebuild_csv
         self.satellite_map_names: List[MapSatellite] = satellite_map_names
@@ -52,35 +53,26 @@ class ThumbnailsGenerator:
         coordinates = namedtuple('coordinates', ['lt_lat', 'lt_lon', 'rb_lat', 'rb_lon'])
         return coordinates(lt_lat, lt_lon, rb_lat, rb_lon)
 
-    def __split_sizes(self, total, parts):
-        base = total // parts
-        remainder = total % parts
-        return [base + 1 if i < remainder else base for i in range(parts)]
+    def __split_sizes(self, total, size):
+        parts = math.ceil(total / size)
+        return [size*i for i in range(parts)]
 
 
-    def __generate_patches(self, src, width_crop_count, height_crop_count):
+    def __generate_patches(self, src, width_size=256, height_size=256):
 
         height, width = src.height, src.width
-        x_sizes = self.__split_sizes(width, width_crop_count)
-        y_sizes = self.__split_sizes(height, height_crop_count)
+        x_sizes = self.__split_sizes(width, width_size)
+        y_sizes = self.__split_sizes(height, height_size)
 
-        x_offsets = [0]
-        for s in x_sizes[:-1]:
-            x_offsets.append(x_offsets[-1] + s)
+        for y_off in y_sizes:
+            for x_off in x_sizes:
 
-        y_offsets = [0]
-        for s in y_sizes[:-1]:
-            y_offsets.append(y_offsets[-1] + s)
+                window = Window(x_off, y_off, width_size, height_size)
 
-        for y_off, h in zip(y_offsets, y_sizes):
-            for x_off, w in zip(x_offsets, x_sizes):
+                x_end = x_off + width_size
+                y_end = y_off + height_size
 
-                window = Window(x_off, y_off, w, h)
-
-                x_end = x_off + w
-                y_end = y_off + h
-
-                patch_data = src.read(window=window)  # shape: (bands, h, w)
+                patch_data = src.read(window=window, boundless=True)  # shape: (bands, h, w)
 
                 # Change to HWC
                 patch_cv2 = np.moveaxis(patch_data, 0, -1)
@@ -88,7 +80,7 @@ class ThumbnailsGenerator:
                 if patch_cv2.shape[-1] == 3:
                     patch_cv2 = cv2.cvtColor(patch_cv2, cv2.COLOR_RGB2BGR)
 
-                yield patch_cv2, (x_off, y_off, x_end, y_end, w, h)
+                yield patch_cv2, (x_off, y_off, x_end, y_end, width_size, height_size)
 
     def __get_gps_coords(self, x_start, y_start, x_end, y_end,
                        img_width, img_height,
@@ -123,8 +115,8 @@ class ThumbnailsGenerator:
             print('height: ', height_image)
             print('channel: ', src.count)
 
-            for i, (patch, coords) in enumerate(self.__generate_patches(src, self.width_crop_count,
-                                                                 self.height_crop_count)):  # height_crop_count, width_crop_count - hyperparameters
+            for i, (patch, coords) in enumerate(self.__generate_patches(src, self.width_size,
+                                                                 self.height_size)):  # height_crop_count, width_crop_count - hyperparameters
                 gps_coords = self.__get_gps_coords(coords[0],
                                                    coords[1],
                                                    coords[2],

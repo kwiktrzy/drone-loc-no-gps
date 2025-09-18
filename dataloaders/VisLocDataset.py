@@ -3,7 +3,7 @@ from typing import List
 import torch
 import pandas as pd
 from PIL import UnidentifiedImageError
-from PIL.Image import Image
+import PIL.Image 
 from torch.utils.data import Dataset
 
 import torchvision.transforms as T
@@ -49,17 +49,17 @@ class VisLocDataset(Dataset):
     @staticmethod
     def __image_loader(path):
         try:
-            return Image.open(path).convert('RGB')
+            return PIL.Image.open(path).convert('RGB')
         except UnidentifiedImageError:
             print(f'Image {path} could not be loaded')
-            return Image.new('RGB', (224, 224))
+            return PIL.Image.new('RGB', (224, 224))
 
     def __getitem__(self, index):
         place_id = self.places_ids[index]
-        places =self.dataframe.loc[place_id]
+        places = self.dataframe[self.dataframe.index == place_id]
 
-        places = places.sample(n=self.image_per_place)
-        places = places[: self.image_per_place]
+        # TODO: Maybe because I have one image from one map, it's worth considering returning up to four copies, but rethinking the augmentation?
+        places = places.sample(n=self.image_per_place, replace=True)
 
         images = []
 
