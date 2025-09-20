@@ -2,8 +2,10 @@ from typing import List
 
 import pytorch_lightning as pl
 from torch.utils.data import DataLoader
+from torchvision import transforms as T
 
 from dataloaders.VisLocDataset import VisLocDataset
+from dataloaders.AerialVLValDataset import AerialVLValDataset
 
 
 #TODO: Check which dinov2's pretraning tensor transform was used for pretraining, and set mean correct mean
@@ -22,9 +24,11 @@ class MapsDataModule(pl.LightningDataModule):
                  thumbnails_csv_file_paths: List[str]=None,
                  batch_size=32,
                  num_workers=4,
+                 val_set_dataframes_paths=[''],
                  shuffle_all=False,
                  mean_std=VIT_MEAN_STD,
-                 random_sample_from_each_place=True
+                 random_sample_from_each_place=True,
+                 image_size=(224, 224)
                  ):
         super().__init__()
         self.thumbnails_csv_file_paths: List[str]=thumbnails_csv_file_paths
@@ -33,10 +37,24 @@ class MapsDataModule(pl.LightningDataModule):
         self.shuffle_all=shuffle_all
         self.mean_dataset = mean_std['mean']
         self.std_dataset = mean_std['std']
+        self.val_set_dataframes_paths = val_set_dataframes_paths
+        self.image_size = image_size
 
         self.random_sample_from_each_place = random_sample_from_each_place
 
         self.save_hyperparameters() # save hyperparameter with Pytorch Lightning
+
+        self.train_transform = T.Compose([
+            T.Resize(image_size, interpolation=T.InterpolationMode.BILINEAR),
+            T.RandAugment(num_ops=3, interpolation=T.InterpolationMode.BILINEAR),
+            T.ToTensor(),
+            T.Normalize(mean=self.mean_dataset, std=self.std_dataset),
+        ])
+
+        self.valid_transform = T.Compose([
+            T.Resize(image_size, interpolation=T.InterpolationMode.BILINEAR),
+            T.ToTensor(),
+            T.Normalize(mean=self.mean_dataset, std=self.std_dataset)])
 
         #TODO: ANALYSE IT, AND REWRITE
         self.train_loader_config = {
@@ -49,6 +67,11 @@ class MapsDataModule(pl.LightningDataModule):
     def setup(self, stage: str):
         if stage == 'fit':
             self.reload()
+
+            self.val_datasets=[]
+            for valid_set_name in self.val_set_dataframes_paths:
+                if "Shandong-1" in valid_set_name:
+                    self.val_datasets.append(AerialVLValDataset(valid_set_name, input_transform=self.valid_transform))
 
     def reload(self):
         self.train_dataset = VisLocDataset(

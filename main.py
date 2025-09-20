@@ -14,7 +14,13 @@ if __name__ == '__main__':
                          map_tif_path='/home/user/repos/datasets/UAV_VisLoc/03/satellite03.tif',
                          map_name='satellite03.tif',
                          region_name='Taizhou-1',
-                         friendly_name='visloc-Taizhou-1-03')
+                         friendly_name='visloc-Taizhou-1-03'),
+            # MapSatellite(csv_path='/home/user/repos/datasets/AerialVL/coordinates_range.csv',
+            #              thumbnails_satellite_csv_output_path='/home/user/repos/drone-loc-no-gps/Dataframes/Shandong-1.csv',
+            #              map_tif_path='/home/user/repos/datasets/AerialVL/geo_referenced_map/@small_map@120.42114259488751@36.604504047017464@120.4568481612987@36.586863027841225@.tif',
+            #              map_name='@small_map@120.42114259488751@36.604504047017464@120.4568481612987@36.586863027841225@.tif',
+            #              region_name='Shandong-1',
+            #              friendly_name='aerialal-Shandong-1-01')            
         ],
         is_rebuild_csv=True,
         height_size=224,
@@ -28,7 +34,8 @@ if __name__ == '__main__':
     thumbnails_paths = thumbnails_generator.get_csv_thumbnails_paths()
     datamodule = MapsDataModule(
         thumbnails_csv_file_paths=thumbnails_paths,
-        batch_size=32
+        batch_size=32,
+        val_set_dataframes_paths=['/home/user/repos/drone-loc-no-gps/Dataframes/Shandong-1.csv']
     )
 
     model = VPRModel(
