@@ -26,12 +26,12 @@ if __name__ == '__main__':
         height_size=224,
         width_size=224
     )
+    # TODO: UavCropGenerator
     # TODO: smart if
     # thumbnails_generator.generate_thumbnails()
 
     # TODO: think twice where is paths of pictures. We do not have validation...?
     # thumbnails_generator.csv_thumbnails_paths;
-    thumbnails_paths = thumbnails_generator.get_csv_thumbnails_paths()
     datamodule = MapsDataModule(
         thumbnails_csv_file_paths=thumbnails_paths,
         batch_size=32,

@@ -27,14 +27,16 @@ from dataset_splitter.MapSatellite import MapSatellite
 
 # patch_format = '.png'#".jpg"
 # compress_for_png = 5 #PNG: 0 (none) - 9 (max)
-# compress_for_jpg = 92 # JPEG
+# compress_for_jpg = 92 # JPEG 0(max) - 100(none)
+
 
 class ThumbnailsGenerator:
     def __init__(self,
                  output_dir,
                  width_size: int=224,
                  height_size: int=224,
-                 patch_format_compress=('.png', 5),
+                 patch_format_compress=('.jpg', 98),
+                 place_id_round=4,
                  is_rebuild_csv=True,
                  satellite_map_names: List[MapSatellite]=None):
         self.output_dir=output_dir
@@ -44,6 +46,7 @@ class ThumbnailsGenerator:
         self.is_rebuild_csv=is_rebuild_csv
         self.satellite_map_names: List[MapSatellite] = satellite_map_names
         self.csv_thumbnails_paths: List[str] = []
+
 
     def __get_map_coordinates_csv(self, csv_path, mapname):
         df = pd.read_csv(csv_path)
@@ -134,9 +137,13 @@ class ThumbnailsGenerator:
                 patch_dir=f"{dir_output}/patch__{gps_coords[0]}__{gps_coords[1]}__{gps_coords[2]}__{gps_coords[3]}__{uuid.uuid4().hex}"
                 patch_dir_ext = f"{patch_dir.replace('.', '_')}{self.patch_format_compress[0]}"
                 # place_id, source
+                lat = (gps_coords[0] + gps_coords[2])/2
+                lon = (gps_coords[1] + gps_coords[3])/2
+
                 row = {'img_path': patch_dir_ext,
                        'LT_lat': gps_coords[0], 'LT_lon': gps_coords[1],
                        'RB_lat': gps_coords[2], 'RB_lon': gps_coords[3],
+                       'lon': lon, 'lat': lat,
                        'patch_width': coords[4], 'patch_height': coords[5],
                        'region_name': map.region_name, 'friendly-name': map.friendly_name }
 
@@ -154,13 +161,6 @@ class ThumbnailsGenerator:
                 
                 print(f"\rGenerated:{i}", end='', flush=True)
 
-    def __calculate_place_id(self, csv_thumbnails_paths):
-        # Assumption the regions are in the same csv file
-        for csv_path in csv_thumbnails_paths:
-            df = pd.read_csv(csv_path)
-            df['place_id'] = pd.factorize(df[['LT_lat', 'LT_lon', 'RB_lat', 'RB_lon']].apply(tuple, axis=1))[0]
-            df.to_csv(csv_path, index=False)
-
 
     def generate_thumbnails(self):
         for map in self.satellite_map_names:
@@ -168,12 +168,6 @@ class ThumbnailsGenerator:
             coords = self.__get_map_coordinates_csv(map.csv_path, map.map_name)
             map.set_coordinates(lt_lat=coords.lt_lat, lt_lon=coords.lt_lon, rb_lat=coords.rb_lat,rb_lon=coords.rb_lon)
             self.__crop_map(map)
-            print("Processed")
+            print(f"Processed {map.map_name}")
 
-        self.csv_thumbnails_paths = self.get_csv_thumbnails_paths()
-        self.__calculate_place_id(self.csv_thumbnails_paths)
         print("Generation thumbnails completed!")
-
-    def get_csv_thumbnails_paths(self):
-        # If we have already prepared thumbnails, we can just take csv_thumbnails_paths without requirement to generate them. 
-        return list(set([obj.thumbnails_satellite_csv_output_path for obj in self.satellite_map_names]))
