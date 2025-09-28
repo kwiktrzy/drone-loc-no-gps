@@ -33,40 +33,37 @@ class UavCropGenerator:
         self.crop_scale=crop_scale
 
 
-    def process_image(self, input_path, output_path):
-
+    def __process_image(self, input_path, output_path):
         try:
-            with cv2.imread(input_path) as img:
-                width, height = img.size
-
-                shorter_side = min(width, height)
-
-
-                crop_size = shorter_side * self.crop_scale
-
-                left = (width - crop_size) / 2
-                top = (height - crop_size) / 2
-                right = (width + crop_size) / 2
-                bottom = (height + crop_size) / 2
-
-                cropped_img = img.crop((left, top, right, bottom))
-
-
-                resized_img = cv2.resize(cropped_img,
-                                         dsize=(self.target_width_size, self.target_height_size),
-                                         interpolation=cv2.INTER_LANCZOS4)
-
-
-                if self.patch_format_compress[0] == '.png':
-                    cv2.imwrite(output_path, resized_img, [cv2.IMWRITE_PNG_COMPRESSION, self.patch_format_compress[1]])
-                elif self.patch_format_compress[0] == '.jpg':
-                    cv2.imwrite(output_path, resized_img, [cv2.IMWRITE_JPEG_QUALITY, self.patch_format_compress[1]])
-                else:
+            img = cv2.imread(input_path)
+            if img is None:
+                print(f"Error. Unable to read image: {input_path}")
+                return
+            
+            width, height, channels = img.shape 
+            shorter_side = min(width, height)
+            crop_size = shorter_side * self.crop_scale
+            left = (width - crop_size) / 2
+            top = (height - crop_size) / 2
+            right = (width + crop_size) / 2
+            bottom = (height + crop_size) / 2
+            cropped_img = img[int(top):int(bottom), int(left):int(right)]
+            resized_img = cv2.resize(cropped_img,
+                                     dsize=(self.target_width_size, self.target_height_size),
+                                     interpolation=cv2.INTER_LANCZOS4)
+            if self.patch_format_compress[0] == '.png':
+                cv2.imwrite(output_path, resized_img, [cv2.IMWRITE_PNG_COMPRESSION, self.patch_format_compress[1]])
+            elif self.patch_format_compress[0] == '.jpg':
+                cv2.imwrite(output_path, resized_img, [cv2.IMWRITE_JPEG_QUALITY, self.patch_format_compress[1]])
+            else:
                     print("OH NO...u used unsupported thumbnail format!")
-                    return
+                    return False
 
         except Exception as e:
             print(f"Error {input_path}: {e}")
+            return False
+        
+        return True
 
 
 
@@ -83,22 +80,21 @@ class UavCropGenerator:
 
         df = pd.read_csv(self.csv_path)
         for index, row in df.iterrows():
-            input_path = f"{self.uav_images_dir}/{row["filename"]}"
+            input_path = f"{self.uav_images_dir}/{row['filename']}"
 
 
             patch_dir = f"{dir_output}/patch__{row['lat']}__{row['lon']}__{uuid.uuid4().hex}"
             patch_dir_ext = f"{patch_dir.replace('.', '_')}{self.patch_format_compress[0]}"
 
-            self.process_image(input_path,patch_dir_ext)
+            if self.__process_image(input_path,patch_dir_ext):
+                row = {'img_path': patch_dir_ext,
+                       'LT_lat': 0, 'LT_lon': 0,
+                       'RB_lat': 0, 'RB_lon': 0,
+                       'lon': row['lon'], 'lat': row['lat'],
+                       'patch_width': self.target_width_size, 'patch_height': self.target_height_size,
+                       'region_name': self.region_name, 'friendly-name': self.friendly_name}
 
-            row = {'img_path': patch_dir_ext,
-                   'LT_lat': 0, 'LT_lon': 0,
-                   'RB_lat': 0, 'RB_lon': 0,
-                   'lon': row['lon'], 'lat': row['lat'],
-                   'patch_width': self.target_width_size, 'patch_height': self.target_height_size,
-                   'region_name': self.region_name, 'friendly-name': self.friendly_name}
-
-            self.__append_row_csv(row, self.cropped_uav_csv_output_path)
-            print(f"\rGenerated:{index}", end='', flush=True)
+                self.__append_row_csv(row, self.cropped_uav_csv_output_path)
+                print(f"\rGenerated:{index}", end='', flush=True)
 
         print("Generation thumbnails completed!")

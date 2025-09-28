@@ -21,6 +21,7 @@ class AerialVLValDataset(Dataset):
         self.random_seed=random_seed
         self.df = pd.read_csv(dataframe_csv_path)
         self.posDistThr = posDistThr
+        self.input_transform=input_transform
         
         self.positives = None
         self.distances = None
@@ -45,13 +46,11 @@ class AerialVLValDataset(Dataset):
         return len(self.images)
 
     def __calculate_properties(self):
-        df_s = self.df.sample(frac=1, random_seed=self.random_seed).reset_index(drop=True)
-        df_s['center_lat'] = (df_s['LT_lat'] + df_s['RB_lat']) / 2
-        df_s['center_lon'] = (df_s['LT_lon'] + df_s['RB_lon']) / 2
+        df_s = self.df.sample(frac=1, random_state=self.random_seed).reset_index(drop=True)
         utm_coords = df_s.apply(
-        lambda row: utm.from_latlon(row['center_lat'], row['center_lon'])[:2],
+        lambda row: utm.from_latlon(row['lat'], row['lon'])[:2],
         axis=1)
-        utm_np = np.stack(utm_coords.values)
+        utm_np = np.stack(utm_coords.tolist())
         num_total = len(df_s)
         split_index = int(num_total * self.db_ratio)
         all_image_paths = df_s['img_path'].tolist()
@@ -61,7 +60,7 @@ class AerialVLValDataset(Dataset):
         self.db_utm_np = utm_np[:split_index]
         self.q_utm_np = utm_np[split_index:]
 
-    def getPositives(self):
+    def get_positives(self):
         # positives for evaluation are those within trivial threshold range
         # fit NN to find them, search by radius
         if self.positives is None:

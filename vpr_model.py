@@ -1,6 +1,6 @@
 import pytorch_lightning as pl
 import torch
-from torch.optim import lr_scheduler, optimizer
+from torch.optim import lr_scheduler
 
 from models import abstract, utils
 
@@ -217,14 +217,14 @@ class VPRModel(pl.LightningModule):
         for i, (val_set_name, val_dataset) in enumerate(zip(dm.val_set_names, dm.val_datasets)):
             feats = torch.concat(val_step_outputs[i], dim=0)
 
-            if 'pitts' in val_set_name:
+            if 'Shandong-1' in val_set_name:
                 # split to ref and queries
-                num_references = val_dataset.dbStruct.numDb
-                positives = val_dataset.getPositives()
-            elif 'msls' in val_set_name:
-                # split to ref and queries
-                num_references = val_dataset.num_references
-                positives = val_dataset.pIdx
+                num_references = len(val_dataset.db_image_paths)
+                positives = val_dataset.get_positives()
+            # elif 'msls' in val_set_name:
+            #     # split to ref and queries
+            #     num_references = val_dataset.num_references
+                # positives = val_dataset.pIdx
             else:
                 print(f'Please implement validation_epoch_end for {val_set_name}')
                 raise NotImplemented

@@ -21,10 +21,10 @@ TRAIN_DATASET_NAMES = [
 
 class MapsDataModule(pl.LightningDataModule):
     def __init__(self,
-                 thumbnails_csv_file_paths: List[str]=None,
+                 thumbnails_csv_file_paths: List[str]=[],
                  batch_size=32,
-                 num_workers=4,
-                 val_set_dataframes_paths=[''],
+                 num_workers=1,
+                 val_set_dataframes_paths=[],
                  shuffle_all=False,
                  mean_std=VIT_MEAN_STD,
                  random_sample_from_each_place=True,
@@ -71,7 +71,7 @@ class MapsDataModule(pl.LightningDataModule):
             self.val_datasets=[]
             for valid_set_name in self.val_set_dataframes_paths:
                 if "Shandong-1" in valid_set_name:
-                    self.val_datasets.append(AerialVLValDataset(valid_set_name, input_transform=self.valid_transform))
+                    self.val_datasets.append(AerialVLValDataset(valid_set_name, 65, input_transform=self.valid_transform))
 
     def reload(self):
         self.train_dataset = VisLocDataset(
