@@ -63,8 +63,8 @@ class AerialVLValDataset(Dataset):
     def get_positives(self):
         # positives for evaluation are those within trivial threshold range
         # fit NN to find them, search by radius
-        if self.positives is None:
-            knn = NearestNeighbors(n_jobs=-1)
+        if self.positives is None: 
+            knn = NearestNeighbors(n_jobs=1)
             knn.fit(self.db_utm_np)
 
             self.distances, self.positives = knn.radius_neighbors(self.q_utm_np,

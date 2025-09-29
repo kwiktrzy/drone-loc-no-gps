@@ -24,7 +24,7 @@ class MapsDataModule(pl.LightningDataModule):
                  thumbnails_csv_file_paths: List[str]=[],
                  batch_size=32,
                  num_workers=1,
-                 val_set_dataframes_paths=[],
+                 val_set_names=[],
                  shuffle_all=False,
                  mean_std=VIT_MEAN_STD,
                  random_sample_from_each_place=True,
@@ -37,7 +37,7 @@ class MapsDataModule(pl.LightningDataModule):
         self.shuffle_all=shuffle_all
         self.mean_dataset = mean_std['mean']
         self.std_dataset = mean_std['std']
-        self.val_set_dataframes_paths = val_set_dataframes_paths
+        self.val_set_names = val_set_names
         self.image_size = image_size
 
         self.random_sample_from_each_place = random_sample_from_each_place
@@ -63,15 +63,22 @@ class MapsDataModule(pl.LightningDataModule):
             'drop_last': False,
             'pin_memory': True,
             'shuffle': self.shuffle_all}
+        
+        self.valid_loader_config = {
+            'batch_size': self.batch_size,
+            'num_workers': 0,
+            'drop_last': False,
+            'pin_memory': True,
+            'shuffle': False}
 
     def setup(self, stage: str):
-        if stage == 'fit':
+        if stage == 'fit' or stage == 'validate':
             self.reload()
 
             self.val_datasets=[]
-            for valid_set_name in self.val_set_dataframes_paths:
+            for valid_set_name in self.val_set_names:
                 if "Shandong-1" in valid_set_name:
-                    self.val_datasets.append(AerialVLValDataset(valid_set_name, 65, input_transform=self.valid_transform))
+                    self.val_datasets.append(AerialVLValDataset(valid_set_name, 0.65, input_transform=self.valid_transform))
 
     def reload(self):
         self.train_dataset = VisLocDataset(
@@ -82,3 +89,10 @@ class MapsDataModule(pl.LightningDataModule):
     def train_dataloader(self):
         self.reload()
         return DataLoader(self.train_dataset, **self.train_loader_config)
+    
+    def val_dataloader(self):
+        val_dataloaders = []
+        for val_dataset in self.val_datasets:
+            val_dataloaders.append(DataLoader(
+                dataset=val_dataset, **self.valid_loader_config))
+        return val_dataloaders

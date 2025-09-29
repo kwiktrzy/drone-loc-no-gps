@@ -1,6 +1,7 @@
 import pytorch_lightning as pl
 import torch
 from torch.optim import lr_scheduler
+from pathlib import Path
 
 from models import abstract, utils
 
@@ -188,12 +189,17 @@ class VPRModel(pl.LightningModule):
         # we empty the batch_acc list for next epoch
         self.batch_acc = []
 
+    # TODO LZ: Verify it 
     # For validation, we will also iterate step by step over the validation set
     # this is the way Pytorch Lghtning is made. All about modularity, folks.
     def validation_step(self, batch, batch_idx, dataloader_idx=None):
         places, _ = batch
         descriptors = self(places)
-        self.val_outputs[dataloader_idx].append(descriptors.detach().cpu())
+
+        # if we pass just one validation DataLoader the dataloader_idx is always None, which breaks the code...
+        idx_to_use = dataloader_idx if dataloader_idx is not None else 0 
+
+        self.val_outputs[idx_to_use].append(descriptors.detach().cpu())
         return descriptors.detach().cpu()
 
     def on_validation_epoch_start(self):
@@ -209,12 +215,16 @@ class VPRModel(pl.LightningModule):
         val_step_outputs = self.val_outputs
 
         dm = self.trainer.datamodule
+
         # The following line is a hack: if we have only one validation set, then
         # we need to put the outputs in a list (Pytorch Lightning does not do it presently)
-        if len(dm.val_datasets) == 1:  # we need to put the outputs in a list
-            val_step_outputs = [val_step_outputs]
-
+        # if len(dm.val_datasets) == 1:  # we need to put the outputs in a list
+        #     val_step_outputs = [val_step_outputs]
+        
         for i, (val_set_name, val_dataset) in enumerate(zip(dm.val_set_names, dm.val_datasets)):
+            
+
+            short_val_name = Path(val_set_name).stem
             feats = torch.concat(val_step_outputs[i], dim=0)
 
             if 'Shandong-1' in val_set_name:
@@ -237,14 +247,18 @@ class VPRModel(pl.LightningModule):
                 k_values=[1, 5, 10, 15, 20, 50, 100],
                 gt=positives,
                 print_results=True,
-                dataset_name=val_set_name,
+                dataset_name=short_val_name,
                 faiss_gpu=self.faiss_gpu
             )
             del r_list, q_list, feats, num_references, positives
 
-            self.log(f'{val_set_name}/R1', pitts_dict[1], prog_bar=False, logger=True)
-            self.log(f'{val_set_name}/R5', pitts_dict[5], prog_bar=False, logger=True)
-            self.log(f'{val_set_name}/R10', pitts_dict[10], prog_bar=False, logger=True)
+            metric_name_r1 = f'{short_val_name}/R1'
+            metric_name_r5 = f'{short_val_name}/R5'
+            print(f"Metrics: '{metric_name_r1}' = {pitts_dict[1]:.4f}, '{metric_name_r5}' = {pitts_dict[5]:.4f}")
+
+            self.log(f'{short_val_name}/R1', pitts_dict[1], prog_bar=False, logger=True)
+            self.log(f'{short_val_name}/R5', pitts_dict[5], prog_bar=False, logger=True)
+            self.log(f'{short_val_name}/R10', pitts_dict[10], prog_bar=False, logger=True)
         print('\n\n')
 
         # reset the outputs list
