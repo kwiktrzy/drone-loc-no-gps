@@ -7,33 +7,43 @@ from dataset_splitter.UavCropGenerator import UavCropGenerator
 from dataset_splitter.PlaceIdGenerator import PlaceIdGenerator
 from vpr_model import VPRModel
 import pandas as pd
+import torch
 
 if __name__ == '__main__':
+
+    # TODO LZ: refactor variables
     visloc_satelite_taizhou_output_csv='/workspace/repos/drone-loc-no-gps/Dataframes/Taizhou-1.csv'
     aerialvl_satelite_shandong_output_csv='/workspace/repos/drone-loc-no-gps/Dataframes/Shandong-1.csv'
+    visloc_satelite_shandan_output_csv='/workspace/repos/drone-loc-no-gps/Dataframes/Shandan.csv'
 
-    # thumbnails_generator = ThumbnailsGenerator(
-    #     output_dir='/workspace/repos/datasets/train_thumbnails',
-    #     satellite_map_names=[
-    #         MapSatellite(csv_path='/workspace/repos/datasets/UAV_VisLoc_dataset/satellite_ coordinates_range.csv',
-    #                      thumbnails_satellite_csv_output_path=visloc_satelite_taizhou_output_csv,
-    #                      map_tif_path='/workspace/repos/datasets/UAV_VisLoc_dataset/03/satellite03.tif',
-    #                      map_name='satellite03.tif',
-    #                      region_name='Taizhou-1',
-    #                      friendly_name='visloc-Taizhou-1-03'),
-    #         MapSatellite(csv_path='/workspace/repos/datasets/Aerial_VL_dataset/coordinates_range.csv',
-    #                      thumbnails_satellite_csv_output_path=aerialvl_satelite_shandong_output_csv,
-    #                      map_tif_path='/workspace/repos/datasets/Aerial_VL_dataset/geo_referenced_map/@small_map@120.42114259488751@36.604504047017464@120.4568481612987@36.586863027841225@.tif',
-    #                      map_name='@small_map@120.42114259488751@36.604504047017464@120.4568481612987@36.586863027841225@.tif',
-    #                      region_name='Shandong-1',
-    #                      friendly_name='aerialal-Shandong-1-01')            
-    #     ],
-    #     is_rebuild_csv=False,
-    #     height_size=224,
-    #     width_size=224
-    # )
+    thumbnails_generator = ThumbnailsGenerator(
+        output_dir='/workspace/repos/datasets/train_thumbnails',
+        satellite_map_names=[
+            # MapSatellite(csv_path='/workspace/repos/datasets/UAV_VisLoc_dataset/satellite_ coordinates_range.csv',
+            #              thumbnails_satellite_csv_output_path=visloc_satelite_taizhou_output_csv,
+            #              map_tif_path='/workspace/repos/datasets/UAV_VisLoc_dataset/03/satellite03.tif',
+            #              map_name='satellite03.tif',
+            #              region_name='Taizhou-1',
+            #              friendly_name='visloc-Taizhou-1-03'),
+            # MapSatellite(csv_path='/workspace/repos/datasets/Aerial_VL_dataset/coordinates_range.csv',
+            #              thumbnails_satellite_csv_output_path=aerialvl_satelite_shandong_output_csv,
+            #              map_tif_path='/workspace/repos/datasets/Aerial_VL_dataset/geo_referenced_map/@small_map@120.42114259488751@36.604504047017464@120.4568481612987@36.586863027841225@.tif',
+            #              map_name='@small_map@120.42114259488751@36.604504047017464@120.4568481612987@36.586863027841225@.tif',
+            #              region_name='Shandong-1',
+            #              friendly_name='aerialal-Shandong-1-01'),
+            MapSatellite(csv_path='/workspace/repos/datasets/UAV_VisLoc_dataset/satellite_ coordinates_range.csv',
+                         thumbnails_satellite_csv_output_path=visloc_satelite_shandan_output_csv,
+                         map_tif_path='/workspace/repos/datasets/UAV_VisLoc_dataset/11/satellite11.tif',
+                         map_name='satellite11.tif',
+                         region_name='Shandan',
+                         friendly_name='visloc-Shandan-11-satellite'),            
+        ],
+        is_rebuild_csv=False,
+        height_size=224,
+        width_size=224
+    )
 
-    # thumbnails_generator.generate_thumbnails()
+    thumbnails_generator.generate_thumbnails()
 
     # uav_visloc = UavCropGenerator(
     #     csv_path='/workspace/repos/datasets/UAV_VisLoc_dataset/03/03.csv',
@@ -46,14 +56,26 @@ if __name__ == '__main__':
     # uav_visloc.generate_thumbnails()
     # # TODO: smart if
 
-    # place_id_generator = PlaceIdGenerator(
-    #     csv_thumbnails_paths=[visloc_satelite_taizhou_output_csv]
-    # )
+    uav_visloc_shandan = UavCropGenerator(
+        csv_path='/workspace/repos/datasets/UAV_VisLoc_dataset/11/11.csv',
+        cropped_uav_csv_output_path=visloc_satelite_shandan_output_csv,
+        cropped_output_dir='/workspace/repos/datasets/train_thumbnails',
+        uav_images_dir='/workspace/repos/datasets/UAV_VisLoc_dataset/11/drone',
+        region_name='Shandan',
+        friendly_name='visloc-Shandan-11-uav'
+    )
+    uav_visloc_shandan.generate_thumbnails()
+
+    place_id_generator = PlaceIdGenerator(
+        csv_thumbnails_paths=[
+            # visloc_satelite_taizhou_output_csv,
+            visloc_satelite_shandan_output_csv]
+    )
 
     datamodule = MapsDataModule(
         thumbnails_csv_file_paths=[visloc_satelite_taizhou_output_csv],
         batch_size=32,
-        val_set_names=[aerialvl_satelite_shandong_output_csv]
+        val_set_names=[visloc_satelite_shandan_output_csv]
     )
 
     model = VPRModel(
@@ -94,9 +116,11 @@ if __name__ == '__main__':
 
     # model params saving using Pytorch Lightning
     # we save the best 3 models accoring to Recall@1 on pittsburg val
+
+    #TODO thats bad model check set, refactor it 
     checkpoint_cb = pl.callbacks.ModelCheckpoint(
-        monitor='Shandong-1/R1',
-        filename=f'{model.encoder_arch}' + '_({epoch:02d})_R1[{Shandong-1/R1:.4f}]_R5[{Shandong-1/R5:.4f}]',
+        monitor='Shandan/R1',
+        filename=f'{model.encoder_arch}' + '_({epoch:02d})_R1[{Shandan/R1:.4f}]_R5[{Shandan/R5:.4f}]',
         auto_insert_metric_name=False,
         save_weights_only=True,
         save_top_k=3,

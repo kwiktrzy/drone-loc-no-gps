@@ -11,10 +11,12 @@ model = VPRModel.load_from_checkpoint(checkpoint_path, strict=False)
 visloc_satelite_taizhou_output_csv='/workspace/repos/drone-loc-no-gps/Dataframes/Taizhou-1.csv'
 aerialvl_satelite_shandong_output_csv='/workspace/repos/drone-loc-no-gps/Dataframes/Shandong-1.csv'
 
+visloc_satelite_shandan_output_csv='/workspace/repos/drone-loc-no-gps/Dataframes/Shandan.csv'
+
 datamodule = MapsDataModule(
     thumbnails_csv_file_paths=[visloc_satelite_taizhou_output_csv],
     batch_size=32,
-    val_set_names=[aerialvl_satelite_shandong_output_csv]
+    val_set_names=[visloc_satelite_shandan_output_csv]
 )
 
 trainer = pl.Trainer(

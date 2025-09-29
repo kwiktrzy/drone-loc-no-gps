@@ -7,6 +7,7 @@ from torchvision import transforms as T
 from dataloaders.VisLocDataset import VisLocDataset
 from dataloaders.AerialVLValDataset import AerialVLValDataset
 
+import dataloaders.VisLocSatelliteUavSeparatedDataset
 
 #TODO: Check which dinov2's pretraning tensor transform was used for pretraining, and set mean correct mean
 IMAGENET_MEAN_STD = {'mean': [0.485, 0.456, 0.406],
@@ -79,6 +80,8 @@ class MapsDataModule(pl.LightningDataModule):
             for valid_set_name in self.val_set_names:
                 if "Shandong-1" in valid_set_name:
                     self.val_datasets.append(AerialVLValDataset(valid_set_name, 0.65, input_transform=self.valid_transform))
+                elif "Shandan" in valid_set_name:
+                    self.val_datasets.append(dataloaders.VisLocSatelliteUavSeparatedDataset.get_separated_test_set(valid_set_name, input_transform=self.valid_transform))
 
     def reload(self):
         self.train_dataset = VisLocDataset(
