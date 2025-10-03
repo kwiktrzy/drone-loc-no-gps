@@ -24,7 +24,7 @@ class MapsDataModule(pl.LightningDataModule):
     def __init__(self,
                  thumbnails_csv_file_paths: List[str]=[],
                  batch_size=32,
-                 num_workers=1,
+                 num_workers=0,
                  val_set_names=[],
                  shuffle_all=False,
                  mean_std=VIT_MEAN_STD,

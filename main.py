@@ -50,7 +50,7 @@ if __name__ == '__main__':
         width_size=224
     )
 
-    thumbnails_generator.generate_thumbnails()
+    # thumbnails_generator.generate_thumbnails()
 
     uav_visloc = UavCropGenerator(
         csv_path='/workspace/repos/datasets/UAV_VisLoc_dataset/03/03.csv',
@@ -60,7 +60,7 @@ if __name__ == '__main__':
         region_name='Taizhou-1',
         friendly_name='visloc-Taizhou-1-03-uav'
     )
-    uav_visloc.generate_thumbnails()
+    # uav_visloc.generate_thumbnails()
 
     uav_visloc_yunan = UavCropGenerator(
         csv_path='/workspace/repos/datasets/UAV_VisLoc_dataset/05/05.csv',
@@ -70,7 +70,7 @@ if __name__ == '__main__':
         region_name='Yunnan',
         friendly_name='visloc-Yunnan-05-uav'
     )
-    uav_visloc_yunan.generate_thumbnails()
+    # uav_visloc_yunan.generate_thumbnails()
     # # TODO: smart if
 
     uav_visloc_shandan = UavCropGenerator(
@@ -81,14 +81,14 @@ if __name__ == '__main__':
         region_name='Shandan',
         friendly_name='visloc-Shandan-11-uav'
     )
-    uav_visloc_shandan.generate_thumbnails()
+    # uav_visloc_shandan.generate_thumbnails()
 
-    place_id_generator = PlaceIdGenerator(
-        csv_thumbnails_paths=[
-            visloc_satelite_taizhou_output_csv,
-            visloc_satelite_shandan_output_csv,
-            visloc_satelite_yunnan_output_csv]
-    )
+    # place_id_generator = PlaceIdGenerator(
+    #     csv_thumbnails_paths=[
+    #         visloc_satelite_taizhou_output_csv,
+    #         visloc_satelite_shandan_output_csv,
+    #         visloc_satelite_yunnan_output_csv]
+    # )
 
     datamodule = MapsDataModule(
         thumbnails_csv_file_paths=[visloc_satelite_taizhou_output_csv, visloc_satelite_yunnan_output_csv],

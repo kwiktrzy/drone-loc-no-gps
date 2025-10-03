@@ -237,8 +237,9 @@ class VPRModel(pl.LightningModule):
                 # split to ref and queries
                 num_references = len(val_dataset.db_image_paths)
                 positives = val_dataset.get_positives()
-                print(f"Queries: {len(positives)}")
-                print(f"References: {num_references}")
+                print("\n Shandan:")
+                print(f"\n Queries: {len(positives)}")
+                print(f"\n References: {num_references}")
             # elif 'msls' in val_set_name:
             #     # split to ref and queries
             #     num_references = val_dataset.num_references

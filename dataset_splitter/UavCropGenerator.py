@@ -95,6 +95,6 @@ class UavCropGenerator:
                        'region_name': self.region_name, 'friendly-name': self.friendly_name}
 
                 self.__append_row_csv(row, self.cropped_uav_csv_output_path)
-                print(f"\rGenerated:{index}", end='', flush=True)
+                print(f"\rGenerated uav crops:{index}", end='', flush=True)
 
         print("\n Generation thumbnails completed!")
