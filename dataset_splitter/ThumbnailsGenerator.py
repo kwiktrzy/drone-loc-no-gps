@@ -35,7 +35,7 @@ class ThumbnailsGenerator:
                  output_dir,
                  width_size: int=224,
                  height_size: int=224,
-                 patch_format_compress=('.jpg', 98),
+                 patch_format_compress=('.jpg', 100),
                  place_id_round=4,
                  is_rebuild_csv=True,
                  satellite_map_names: List[MapSatellite]=None):
@@ -118,8 +118,8 @@ class ThumbnailsGenerator:
             print('height: ', height_image)
             print('channel: ', src.count)
 
-            for i, (patch, coords) in enumerate(self.__generate_patches(src, self.width_size,
-                                                                 self.height_size)):  # height_crop_count, width_crop_count - hyperparameters
+            for i, (patch, coords) in enumerate(self.__generate_patches(src, 672,
+                                                                 672)):  # height_crop_count, width_crop_count - hyperparameters
                 gps_coords = self.__get_gps_coords(coords[0],
                                                    coords[1],
                                                    coords[2],
@@ -154,7 +154,11 @@ class ThumbnailsGenerator:
                 if self.patch_format_compress[0] == '.png':
                     cv2.imwrite(patch_dir_ext, patch, [cv2.IMWRITE_PNG_COMPRESSION, self.patch_format_compress[1]])
                 elif self.patch_format_compress[0] == '.jpg':
-                    cv2.imwrite(patch_dir_ext, patch, [cv2.IMWRITE_JPEG_QUALITY, self.patch_format_compress[1]])
+                    
+                    resized_img = cv2.resize(patch,
+                                     dsize=(self.width_size, self.height_size),
+                                     interpolation=cv2.INTER_LANCZOS4)
+                    cv2.imwrite(patch_dir_ext, resized_img, [cv2.IMWRITE_JPEG_QUALITY, self.patch_format_compress[1]])
                 else:
                     print("OH NO...u used unsupported thumbnail format!")
                     return
