@@ -118,8 +118,8 @@ class ThumbnailsGenerator:
             print('height: ', height_image)
             print('channel: ', src.count)
 
-            for i, (patch, coords) in enumerate(self.__generate_patches(src, 672,
-                                                                 672)):  # height_crop_count, width_crop_count - hyperparameters
+            for i, (patch, coords) in enumerate(self.__generate_patches(src, 448,
+                                                                 448)):  # height_crop_count, width_crop_count - hyperparameters
                 gps_coords = self.__get_gps_coords(coords[0],
                                                    coords[1],
                                                    coords[2],

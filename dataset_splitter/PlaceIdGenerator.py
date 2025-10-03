@@ -83,7 +83,9 @@ class PlaceIdGenerator:
 
 
             df.to_csv(csv_path, index=False)
-            ranking = df['place_id'].value_counts()
-            print(f'Ranking {csv_path}:\n{ranking}\n')
+            print(f'\n Mean distance between satelite and uav: {df["uav_to_nearest_sat_m"].mean()} m');
 
-        print("done")
+            ranking = df['place_id'].value_counts()
+            print(f'\n Ranking {csv_path}:\n{ranking}\n')
+
+        print("\n done")

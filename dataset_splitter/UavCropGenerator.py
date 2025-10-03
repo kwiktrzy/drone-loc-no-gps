@@ -17,7 +17,7 @@ class UavCropGenerator:
                  uav_images_dir='',
                  region_name='',
                  friendly_name='',
-                 patch_format_compress=('.jpg', 98),
+                 patch_format_compress=('.jpg', 70),
                  target_width_size=224,
                  target_height_size=224,
                  crop_scale=0.8):
@@ -37,7 +37,7 @@ class UavCropGenerator:
         try:
             img = cv2.imread(input_path)
             if img is None:
-                print(f"Error. Unable to read image: {input_path}")
+                print(f"\nError. Unable to read image: {input_path}")
                 return
             
             width, height, channels = img.shape 
@@ -56,7 +56,7 @@ class UavCropGenerator:
             elif self.patch_format_compress[0] == '.jpg':
                 cv2.imwrite(output_path, resized_img, [cv2.IMWRITE_JPEG_QUALITY, self.patch_format_compress[1]])
             else:
-                    print("OH NO...u used unsupported thumbnail format!")
+                    print("\nOH NO...u used unsupported thumbnail format!")
                     return False
 
         except Exception as e:
@@ -97,4 +97,4 @@ class UavCropGenerator:
                 self.__append_row_csv(row, self.cropped_uav_csv_output_path)
                 print(f"\rGenerated:{index}", end='', flush=True)
 
-        print("Generation thumbnails completed!")
+        print("\n Generation thumbnails completed!")

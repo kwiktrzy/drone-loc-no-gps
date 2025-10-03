@@ -1,0 +1,45 @@
+agg_arch: SALAD
+agg_config:
+  cluster_dim: 128
+  num_channels: 768
+  num_clusters: 64
+  token_dim: 256
+backbone_arch: dinov2_vitb14
+backbone_config:
+  norm_layer: true
+  num_trainable_blocks: 4
+  return_token: true
+batch_size: 32
+faiss_gpu: false
+image_size: !!python/tuple
+- 224
+- 224
+loss_name: MultiSimilarityLoss
+lr: 6.0e-05
+lr_sched: linear
+lr_sched_args:
+  end_factor: 0.2
+  start_factor: 1
+  total_iters: 4000
+mean_std:
+  mean:
+  - 0.5
+  - 0.5
+  - 0.5
+  std:
+  - 0.5
+  - 0.5
+  - 0.5
+miner_margin: 0.1
+miner_name: MultiSimilarityMiner
+momentum: 0.9
+num_workers: 1
+optimizer: adamw
+random_sample_from_each_place: true
+shuffle_all: false
+thumbnails_csv_file_paths:
+- /workspace/repos/drone-loc-no-gps/Dataframes/Taizhou-1.csv
+- /workspace/repos/drone-loc-no-gps/Dataframes/Yunnan.csv
+val_set_names:
+- /workspace/repos/drone-loc-no-gps/Dataframes/Shandan.csv
+weight_decay: 9.5e-09

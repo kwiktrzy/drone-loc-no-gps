@@ -2,7 +2,7 @@ import pytorch_lightning as pl
 from vpr_model import VPRModel
 from dataloaders.MapsDataloader import MapsDataModule
 
-checkpoint_path = "/workspace/repos/logs/lightning_logs/version_7/checkpoints/last.ckpt" 
+checkpoint_path = "/workspace/repos/logs/lightning_logs/version_9/checkpoints/last.ckpt" 
 
 # model = VPRModel.load_from_checkpoint(checkpoint_path)
 
@@ -12,6 +12,8 @@ visloc_satelite_taizhou_output_csv='/workspace/repos/drone-loc-no-gps/Dataframes
 aerialvl_satelite_shandong_output_csv='/workspace/repos/drone-loc-no-gps/Dataframes/Shandong-1.csv'
 
 visloc_satelite_shandan_output_csv='/workspace/repos/drone-loc-no-gps/Dataframes/Shandan.csv'
+visloc_satelite_shandan_output_csv='/workspace/repos/drone-loc-no-gps/Dataframes/Shandan.csv'
+visloc_satelite_yunnan_output_csv='/workspace/repos/drone-loc-no-gps/Dataframes/Yunnan.csv'
 
 datamodule = MapsDataModule(
     thumbnails_csv_file_paths=[visloc_satelite_taizhou_output_csv],

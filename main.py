@@ -38,12 +38,12 @@ if __name__ == '__main__':
             #              map_name='@small_map@120.42114259488751@36.604504047017464@120.4568481612987@36.586863027841225@.tif',
             #              region_name='Shandong-1',
             #              friendly_name='aerialal-Shandong-1-01'),
-            # MapSatellite(csv_path='/workspace/repos/datasets/UAV_VisLoc_dataset/satellite_ coordinates_range.csv',
-            #              thumbnails_satellite_csv_output_path=visloc_satelite_shandan_output_csv,
-            #              map_tif_path='/workspace/repos/datasets/UAV_VisLoc_dataset/11/satellite11.tif',
-            #              map_name='satellite11.tif',
-            #              region_name='Shandan',
-            #              friendly_name='visloc-Shandan-11-satellite'),            
+            MapSatellite(csv_path='/workspace/repos/datasets/UAV_VisLoc_dataset/satellite_ coordinates_range.csv',
+                         thumbnails_satellite_csv_output_path=visloc_satelite_shandan_output_csv,
+                         map_tif_path='/workspace/repos/datasets/UAV_VisLoc_dataset/11/satellite11.tif',
+                         map_name='satellite11.tif',
+                         region_name='Shandan',
+                         friendly_name='visloc-Shandan-11-satellite'),            
         ],
         is_rebuild_csv=False,
         height_size=224,
@@ -73,19 +73,20 @@ if __name__ == '__main__':
     uav_visloc_yunan.generate_thumbnails()
     # # TODO: smart if
 
-    # uav_visloc_shandan = UavCropGenerator(
-    #     csv_path='/workspace/repos/datasets/UAV_VisLoc_dataset/11/11.csv',
-    #     cropped_uav_csv_output_path=visloc_satelite_shandan_output_csv,
-    #     cropped_output_dir='/workspace/repos/datasets/train_thumbnails',
-    #     uav_images_dir='/workspace/repos/datasets/UAV_VisLoc_dataset/11/drone',
-    #     region_name='Shandan',
-    #     friendly_name='visloc-Shandan-11-uav'
-    # )
-    # uav_visloc_shandan.generate_thumbnails()
+    uav_visloc_shandan = UavCropGenerator(
+        csv_path='/workspace/repos/datasets/UAV_VisLoc_dataset/11/11.csv',
+        cropped_uav_csv_output_path=visloc_satelite_shandan_output_csv,
+        cropped_output_dir='/workspace/repos/datasets/train_thumbnails',
+        uav_images_dir='/workspace/repos/datasets/UAV_VisLoc_dataset/11/drone',
+        region_name='Shandan',
+        friendly_name='visloc-Shandan-11-uav'
+    )
+    uav_visloc_shandan.generate_thumbnails()
 
     place_id_generator = PlaceIdGenerator(
         csv_thumbnails_paths=[
             visloc_satelite_taizhou_output_csv,
+            visloc_satelite_shandan_output_csv,
             visloc_satelite_yunnan_output_csv]
     )
 
