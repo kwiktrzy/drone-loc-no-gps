@@ -86,8 +86,8 @@ class MapsDataModule(pl.LightningDataModule):
     def reload(self):
         self.train_dataset = VisLocDataset(
             thumbnails_csv_file_paths=self.thumbnails_csv_file_paths,
-            random_sample_from_each_place=self.random_sample_from_each_place)
-            # transform=self.train_transform)
+            random_sample_from_each_place=self.random_sample_from_each_place,
+            transform=self.train_transform)
 
     def train_dataloader(self):
         self.reload()

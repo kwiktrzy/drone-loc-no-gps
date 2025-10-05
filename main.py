@@ -83,12 +83,11 @@ if __name__ == '__main__':
     )
     # uav_visloc_shandan.generate_thumbnails()
 
-    # place_id_generator = PlaceIdGenerator(
-    #     csv_thumbnails_paths=[
-    #         visloc_satelite_taizhou_output_csv,
-    #         visloc_satelite_shandan_output_csv,
-    #         visloc_satelite_yunnan_output_csv]
-    # )
+    place_id_generator = PlaceIdGenerator(
+        csv_thumbnails_paths=[
+            visloc_satelite_taizhou_output_csv,
+            visloc_satelite_yunnan_output_csv]
+    )
 
     datamodule = MapsDataModule(
         thumbnails_csv_file_paths=[visloc_satelite_taizhou_output_csv, visloc_satelite_yunnan_output_csv],

@@ -34,16 +34,11 @@ class VisLocDataset(Dataset):
     def __get_data_frames(self):
         df = pd.read_csv(self.thumbnails_csv_file_paths[0])
         df = df.sample(frac=1)
-
-        for index, csv_path in enumerate(self.thumbnails_csv_file_paths, start=1):
+        for idx, csv_path in enumerate(self.thumbnails_csv_file_paths[1:], start=1):
             temp_df = pd.read_csv(csv_path)
-            # Did because we want to keep all regions from csv in one.
-            # If csv have place_id 10 and other csv have place_id 10 but show different maps, we totally confuse model
-            # Assumed there is no more than 99999 images and there won't be more than 99 regions
-            temp_df['place_id']=temp_df['place_id'] + (index * 10**5)
+            temp_df['place_id'] = temp_df['place_id'] + (idx * 10**5)
             temp_df = temp_df.sample(frac=1)
             df = pd.concat([df, temp_df], ignore_index=True)
-
         return df.set_index('place_id')
 
     @staticmethod
@@ -58,12 +53,21 @@ class VisLocDataset(Dataset):
         place_id = self.places_ids[index]
         places = self.dataframe[self.dataframe.index == place_id]
 
-        # TODO: Maybe because I have one image from one map, it's worth considering returning up to four copies, but rethinking the augmentation?
-        places = places.sample(n=self.image_per_place, replace=True)
 
+        # places = places.sample(n=self.image_per_place, replace=True)
+        # LZ change : forcing the addition of both domains at the same time has been added because we want to teach the model to search for similarities between domains. Only images from one domain can be included in the batch, 
+        # which artificially inflates b_acc, resulting in a weak eval score. 
+        uav_place_ids = places[places['friendly-name'].str.contains('uav')]
+        sat_place_ids = places[places['friendly-name'].str.contains('satellite')]   
+            
+        uav_samples = uav_place_ids.sample(n=self.image_per_place // 2, replace=True)
+        sat_samples = sat_place_ids.sample(n=self.image_per_place // 2, replace=True)
+        final_samples = pd.concat([uav_samples, sat_samples])
+        
+        
         images = []
-
-        for i, row in places.iterrows():
+        
+        for i, row in final_samples.iterrows():
             img_path =row['img_path']
             img = self.__image_loader(img_path)
             if self.transform is not None:

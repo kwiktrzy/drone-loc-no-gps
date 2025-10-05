@@ -82,10 +82,13 @@ class PlaceIdGenerator:
                     df.loc[uav_idx, 'nearest_sats_pair_distance_m'] = pair
 
 
-            df.to_csv(csv_path, index=False)
             print(f'\n Mean distance between satelite and uav: {df["uav_to_nearest_sat_m"].mean()} m');
 
             ranking = df['place_id'].value_counts()
             print(f'\n Ranking {csv_path}:\n{ranking}\n')
+
+            print(f'\nRemoving single place_id...')
+            df = df[df['place_id'].duplicated(keep=False)]
+            df.to_csv(csv_path, index=False)
 
         print("\n done")

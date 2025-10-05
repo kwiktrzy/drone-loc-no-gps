@@ -4,6 +4,7 @@ from torch.optim import lr_scheduler
 from pathlib import Path
 
 from models import abstract, utils
+import numpy as np
 
 
 class VPRModel(pl.LightningModule):
@@ -240,6 +241,9 @@ class VPRModel(pl.LightningModule):
                 print("\n Shandan:")
                 print(f"\n Queries: {len(positives)}")
                 print(f"\n References: {num_references}")
+                cnts = np.array([len(p) for p in positives])
+                print("\nQ with 0 positives:", (cnts==0).sum(), "/", len(cnts))
+                print("\npositives per Q (median/mean/90p):", np.median(cnts), cnts.mean(), np.quantile(cnts, 0.9))
             # elif 'msls' in val_set_name:
             #     # split to ref and queries
             #     num_references = val_dataset.num_references
