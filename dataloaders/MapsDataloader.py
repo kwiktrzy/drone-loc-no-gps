@@ -27,7 +27,7 @@ class MapsDataModule(pl.LightningDataModule):
                  num_workers=0,
                  val_set_names=[],
                  shuffle_all=False,
-                 mean_std=VIT_MEAN_STD,
+                 mean_std=IMAGENET_MEAN_STD,
                  random_sample_from_each_place=True,
                  image_size=(224, 224)
                  ):
@@ -46,14 +46,14 @@ class MapsDataModule(pl.LightningDataModule):
         self.save_hyperparameters() # save hyperparameter with Pytorch Lightning
 
         self.train_transform = T.Compose([
-            T.Resize(image_size, interpolation=T.InterpolationMode.BILINEAR),
-            T.RandAugment(num_ops=3, interpolation=T.InterpolationMode.BILINEAR),
+            T.Resize(image_size, interpolation=T.InterpolationMode.BICUBIC, antialias=True),
+            T.RandAugment(num_ops=3, interpolation=T.InterpolationMode.BICUBIC),
             T.ToTensor(),
             T.Normalize(mean=self.mean_dataset, std=self.std_dataset),
         ])
 
         self.valid_transform = T.Compose([
-            T.Resize(image_size, interpolation=T.InterpolationMode.BILINEAR),
+            T.Resize(image_size, interpolation=T.InterpolationMode.BICUBIC, antialias=True),
             T.ToTensor(),
             T.Normalize(mean=self.mean_dataset, std=self.std_dataset)])
 

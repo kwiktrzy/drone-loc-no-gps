@@ -174,4 +174,4 @@ class ThumbnailsGenerator:
             self.__crop_map(map)
             print(f"Processed {map.map_name}")
 
-        print("Generation thumbnails completed!")
+        print("\n Generation thumbnails completed!")

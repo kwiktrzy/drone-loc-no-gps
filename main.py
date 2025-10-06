@@ -17,33 +17,64 @@ if __name__ == '__main__':
     visloc_satelite_shandan_output_csv='/workspace/repos/drone-loc-no-gps/Dataframes/Shandan.csv'
     visloc_satelite_yunnan_output_csv='/workspace/repos/drone-loc-no-gps/Dataframes/Yunnan.csv'
 
+    visloc_satelite_Changjiang_20_output_csv='/workspace/repos/drone-loc-no-gps/Dataframes/Changjiang-20.csv'
+    visloc_satelite_Changjiang_23_output_csv='/workspace/repos/drone-loc-no-gps/Dataframes/Changjiang-23.csv'
+    visloc_satelite_Taizhou_6_output_csv='/workspace/repos/drone-loc-no-gps/Dataframes/Taizhou-6.csv'
+    visloc_satelite_Zhuxi_output_csv='/workspace/repos/drone-loc-no-gps/Dataframes/Zhuxi.csv'
+    visloc_satelite_Donghuayuan_output_csv='/workspace/repos/drone-loc-no-gps/Dataframes/Donghuayuan.csv'
+
     thumbnails_generator = ThumbnailsGenerator(
         output_dir='/workspace/repos/datasets/train_thumbnails',
         satellite_map_names=[
-            MapSatellite(csv_path='/workspace/repos/datasets/UAV_VisLoc_dataset/satellite_ coordinates_range.csv',
-                         thumbnails_satellite_csv_output_path=visloc_satelite_taizhou_output_csv,
-                         map_tif_path='/workspace/repos/datasets/UAV_VisLoc_dataset/03/satellite03.tif',
-                         map_name='satellite03.tif',
-                         region_name='Taizhou-1',
-                         friendly_name='visloc-Taizhou-1-03-satellite'),
-            MapSatellite(csv_path='/workspace/repos/datasets/UAV_VisLoc_dataset/satellite_ coordinates_range.csv',
-                         thumbnails_satellite_csv_output_path=visloc_satelite_yunnan_output_csv,
-                         map_tif_path='/workspace/repos/datasets/UAV_VisLoc_dataset/05/satellite05.tif',
-                         map_name='satellite05.tif',
-                         region_name='Yunnan',
-                         friendly_name='visloc-Yunnan-05-satellite'),
+            # MapSatellite(csv_path='/workspace/repos/datasets/UAV_VisLoc_dataset/satellite_ coordinates_range.csv',
+            #              thumbnails_satellite_csv_output_path=visloc_satelite_taizhou_output_csv,
+            #              map_tif_path='/workspace/repos/datasets/UAV_VisLoc_dataset/03/satellite03.tif',
+            #              map_name='satellite03.tif',
+            #              region_name='Taizhou-1',
+            #              friendly_name='visloc-Taizhou-1-03-satellite'),
+            # MapSatellite(csv_path='/workspace/repos/datasets/UAV_VisLoc_dataset/satellite_ coordinates_range.csv',
+            #              thumbnails_satellite_csv_output_path=visloc_satelite_yunnan_output_csv,
+            #              map_tif_path='/workspace/repos/datasets/UAV_VisLoc_dataset/05/satellite05.tif',
+            #              map_name='satellite05.tif',
+            #              region_name='Yunnan',
+            #              friendly_name='visloc-Yunnan-05-satellite'),
             # MapSatellite(csv_path='/workspace/repos/datasets/Aerial_VL_dataset/coordinates_range.csv',
             #              thumbnails_satellite_csv_output_path=aerialvl_satelite_shandong_output_csv,
             #              map_tif_path='/workspace/repos/datasets/Aerial_VL_dataset/geo_referenced_map/@small_map@120.42114259488751@36.604504047017464@120.4568481612987@36.586863027841225@.tif',
             #              map_name='@small_map@120.42114259488751@36.604504047017464@120.4568481612987@36.586863027841225@.tif',
             #              region_name='Shandong-1',
             #              friendly_name='aerialal-Shandong-1-01'),
+            
             MapSatellite(csv_path='/workspace/repos/datasets/UAV_VisLoc_dataset/satellite_ coordinates_range.csv',
-                         thumbnails_satellite_csv_output_path=visloc_satelite_shandan_output_csv,
-                         map_tif_path='/workspace/repos/datasets/UAV_VisLoc_dataset/11/satellite11.tif',
-                         map_name='satellite11.tif',
-                         region_name='Shandan',
-                         friendly_name='visloc-Shandan-11-satellite'),            
+                         thumbnails_satellite_csv_output_path=visloc_satelite_Changjiang_20_output_csv,
+                         map_tif_path='/workspace/repos/datasets/UAV_VisLoc_dataset/01/satellite01.tif',
+                         map_name='satellite01.tif',
+                         region_name='Changjiang-20',
+                         friendly_name='visloc-Changjiang-20-satellite'),  
+            MapSatellite(csv_path='/workspace/repos/datasets/UAV_VisLoc_dataset/satellite_ coordinates_range.csv',
+                         thumbnails_satellite_csv_output_path=visloc_satelite_Changjiang_23_output_csv,
+                         map_tif_path='/workspace/repos/datasets/UAV_VisLoc_dataset/02/satellite02.tif',
+                         map_name='satellite02.tif',
+                         region_name='Changjiang-23',
+                         friendly_name='visloc-Changjiang-23-satellite'),   
+            MapSatellite(csv_path='/workspace/repos/datasets/UAV_VisLoc_dataset/satellite_ coordinates_range.csv',
+                         thumbnails_satellite_csv_output_path=visloc_satelite_Taizhou_6_output_csv,
+                         map_tif_path='/workspace/repos/datasets/UAV_VisLoc_dataset/04/satellite04.tif',
+                         map_name='satellite04.tif',
+                         region_name='Taizhou-6',
+                         friendly_name='visloc-Taizhou-6-satellite'),   
+            MapSatellite(csv_path='/workspace/repos/datasets/UAV_VisLoc_dataset/satellite_ coordinates_range.csv',
+                         thumbnails_satellite_csv_output_path=visloc_satelite_Zhuxi_output_csv,
+                         map_tif_path='/workspace/repos/datasets/UAV_VisLoc_dataset/06/satellite06.tif',
+                         map_name='satellite06.tif',
+                         region_name='Zhuxi',
+                         friendly_name='visloc-Zhuxi-satellite'),
+            MapSatellite(csv_path='/workspace/repos/datasets/UAV_VisLoc_dataset/satellite_ coordinates_range.csv',
+                         thumbnails_satellite_csv_output_path=visloc_satelite_Donghuayuan_output_csv,
+                         map_tif_path='/workspace/repos/datasets/UAV_VisLoc_dataset/07/satellite07.tif',
+                         map_name='satellite07.tif',
+                         region_name='Donghuayuan',
+                         friendly_name='visloc-Donghuayuan-satellite'),                           
         ],
         is_rebuild_csv=False,
         height_size=224,
@@ -52,45 +83,100 @@ if __name__ == '__main__':
 
     # thumbnails_generator.generate_thumbnails()
 
-    uav_visloc = UavCropGenerator(
-        csv_path='/workspace/repos/datasets/UAV_VisLoc_dataset/03/03.csv',
-        cropped_uav_csv_output_path=visloc_satelite_taizhou_output_csv,
-        cropped_output_dir='/workspace/repos/datasets/train_thumbnails',
-        uav_images_dir='/workspace/repos/datasets/UAV_VisLoc_dataset/03/drone',
-        region_name='Taizhou-1',
-        friendly_name='visloc-Taizhou-1-03-uav'
-    )
+    # uav_visloc = UavCropGenerator(
+    #     csv_path='/workspace/repos/datasets/UAV_VisLoc_dataset/03/03.csv',
+    #     cropped_uav_csv_output_path=visloc_satelite_taizhou_output_csv,
+    #     cropped_output_dir='/workspace/repos/datasets/train_thumbnails',
+    #     uav_images_dir='/workspace/repos/datasets/UAV_VisLoc_dataset/03/drone',
+    #     region_name='Taizhou-1',
+    #     friendly_name='visloc-Taizhou-1-03-uav'
+    # )
     # uav_visloc.generate_thumbnails()
 
-    uav_visloc_yunan = UavCropGenerator(
-        csv_path='/workspace/repos/datasets/UAV_VisLoc_dataset/05/05.csv',
-        cropped_uav_csv_output_path=visloc_satelite_yunnan_output_csv,
-        cropped_output_dir='/workspace/repos/datasets/train_thumbnails',
-        uav_images_dir='/workspace/repos/datasets/UAV_VisLoc_dataset/05/drone',
-        region_name='Yunnan',
-        friendly_name='visloc-Yunnan-05-uav'
-    )
+    # uav_visloc_yunan = UavCropGenerator(
+    #     csv_path='/workspace/repos/datasets/UAV_VisLoc_dataset/05/05.csv',
+    #     cropped_uav_csv_output_path=visloc_satelite_yunnan_output_csv,
+    #     cropped_output_dir='/workspace/repos/datasets/train_thumbnails',
+    #     uav_images_dir='/workspace/repos/datasets/UAV_VisLoc_dataset/05/drone',
+    #     region_name='Yunnan',
+    #     friendly_name='visloc-Yunnan-05-uav'
+    # )
     # uav_visloc_yunan.generate_thumbnails()
-    # # TODO: smart if
+    # # # TODO: smart if
 
-    uav_visloc_shandan = UavCropGenerator(
-        csv_path='/workspace/repos/datasets/UAV_VisLoc_dataset/11/11.csv',
-        cropped_uav_csv_output_path=visloc_satelite_shandan_output_csv,
-        cropped_output_dir='/workspace/repos/datasets/train_thumbnails',
-        uav_images_dir='/workspace/repos/datasets/UAV_VisLoc_dataset/11/drone',
-        region_name='Shandan',
-        friendly_name='visloc-Shandan-11-uav'
-    )
+    # uav_visloc_shandan = UavCropGenerator(
+    #     csv_path='/workspace/repos/datasets/UAV_VisLoc_dataset/11/11.csv',
+    #     cropped_uav_csv_output_path=visloc_satelite_shandan_output_csv,
+    #     cropped_output_dir='/workspace/repos/datasets/train_thumbnails',
+    #     uav_images_dir='/workspace/repos/datasets/UAV_VisLoc_dataset/11/drone',
+    #     region_name='Shandan',
+    #     friendly_name='visloc-Shandan-11-uav'
+    # )
     # uav_visloc_shandan.generate_thumbnails()
+    # UavCropGenerator(
+    #     csv_path='/workspace/repos/datasets/UAV_VisLoc_dataset/01/01.csv',
+    #     cropped_uav_csv_output_path=visloc_satelite_Changjiang_20_output_csv,
+    #     cropped_output_dir='/workspace/repos/datasets/train_thumbnails',
+    #     uav_images_dir='/workspace/repos/datasets/UAV_VisLoc_dataset/01/drone',
+    #     region_name='Changjiang-20',
+    #     friendly_name='visloc-Changjiang-20-uav'
+    # )
+    
+    # UavCropGenerator(
+    #     csv_path='/workspace/repos/datasets/UAV_VisLoc_dataset/02/02.csv',
+    #     cropped_uav_csv_output_path=visloc_satelite_Changjiang_23_output_csv,
+    #     cropped_output_dir='/workspace/repos/datasets/train_thumbnails',
+    #     uav_images_dir='/workspace/repos/datasets/UAV_VisLoc_dataset/02/drone',
+    #     region_name='Changjiang-23',
+    #     friendly_name='visloc-Changjiang-23-uav'
+    # )
+    
+    # UavCropGenerator(
+    #     csv_path='/workspace/repos/datasets/UAV_VisLoc_dataset/04/04.csv',
+    #     cropped_uav_csv_output_path=visloc_satelite_Taizhou_6_output_csv,
+    #     cropped_output_dir='/workspace/repos/datasets/train_thumbnails',
+    #     uav_images_dir='/workspace/repos/datasets/UAV_VisLoc_dataset/04/drone',
+    #     region_name='Taizhou-6',
+    #     friendly_name='visloc-Taizhou_6-uav'
+    # )
+    
+    # UavCropGenerator(
+    #     csv_path='/workspace/repos/datasets/UAV_VisLoc_dataset/06/06.csv',
+    #     cropped_uav_csv_output_path=visloc_satelite_Zhuxi_output_csv,
+    #     cropped_output_dir='/workspace/repos/datasets/train_thumbnails',
+    #     uav_images_dir='/workspace/repos/datasets/UAV_VisLoc_dataset/06/drone',
+    #     region_name='Zhuxi',
+    #     friendly_name='visloc-Zhuxi-uav'
+    # )
+    
+    # UavCropGenerator(
+    #     csv_path='/workspace/repos/datasets/UAV_VisLoc_dataset/07/07.csv',
+    #     cropped_uav_csv_output_path=visloc_satelite_Donghuayuan_output_csv,
+    #     cropped_output_dir='/workspace/repos/datasets/train_thumbnails',
+    #     uav_images_dir='/workspace/repos/datasets/UAV_VisLoc_dataset/07/drone',
+    #     region_name='Donghuayuan',
+    #     friendly_name='visloc-Donghuayuan-uav'
+    # )
+    # place_id_generator = PlaceIdGenerator(
+    #     csv_thumbnails_paths=[
+    #         visloc_satelite_Donghuayuan_output_csv,
+    #         visloc_satelite_Zhuxi_output_csv,
+    #         visloc_satelite_Taizhou_6_output_csv,
+    #         visloc_satelite_Changjiang_23_output_csv,
+    #         visloc_satelite_Changjiang_20_output_csv
+    #         ]
+    # )
 
-    place_id_generator = PlaceIdGenerator(
-        csv_thumbnails_paths=[
-            visloc_satelite_taizhou_output_csv,
-            visloc_satelite_yunnan_output_csv]
-    )
-
+    
     datamodule = MapsDataModule(
-        thumbnails_csv_file_paths=[visloc_satelite_taizhou_output_csv, visloc_satelite_yunnan_output_csv],
+        thumbnails_csv_file_paths=[visloc_satelite_taizhou_output_csv, 
+                                   visloc_satelite_yunnan_output_csv,
+                                    visloc_satelite_Donghuayuan_output_csv,
+                                    visloc_satelite_Zhuxi_output_csv,
+                                    visloc_satelite_Taizhou_6_output_csv,
+                                    visloc_satelite_Changjiang_23_output_csv,
+                                    visloc_satelite_Changjiang_20_output_csv
+                                   ],
         batch_size=32,
         val_set_names=[visloc_satelite_shandan_output_csv]
     )
@@ -152,7 +238,7 @@ if __name__ == '__main__':
         num_nodes=1,
         num_sanity_val_steps=0, # runs a validation step before stating training
         precision='16-mixed', # we use half precision to reduce  memory usage
-        max_epochs=4,
+        max_epochs=10,
         check_val_every_n_epoch=1, # run validation every epoch
         callbacks=[checkpoint_cb],# we only run the checkpointing callback (you can add more)
         reload_dataloaders_every_n_epochs=1, # we reload the dataset to shuffle the order

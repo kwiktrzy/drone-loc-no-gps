@@ -31,6 +31,7 @@ class UavCropGenerator:
         self.target_width_size=target_width_size
         self.target_height_size=target_height_size
         self.crop_scale=crop_scale
+        self.generate_thumbnails()
 
 
     def __process_image(self, input_path, output_path):

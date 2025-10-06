@@ -86,9 +86,11 @@ class PlaceIdGenerator:
 
             ranking = df['place_id'].value_counts()
             print(f'\n Ranking {csv_path}:\n{ranking}\n')
-
+            print(f"\fRows: {len(csv_path)}")
             print(f'\nRemoving single place_id...')
+
             df = df[df['place_id'].duplicated(keep=False)]
+            print(f"\fRows after clear up: {len(df['place_id'])}")
             df.to_csv(csv_path, index=False)
 
         print("\n done")
