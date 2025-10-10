@@ -1,3 +1,5 @@
+from turtle import st
+from typing import List
 import pytorch_lightning as pl
 
 from dataloaders.MapsDataloader import MapsDataModule
@@ -7,178 +9,125 @@ from dataset_splitter.UavCropGenerator import UavCropGenerator
 from dataset_splitter.PlaceIdGenerator import PlaceIdGenerator
 from vpr_model import VPRModel
 import pandas as pd
+from pathlib import Path
+import os
 import torch
+import shutil
 
-if __name__ == '__main__':
+class PipelineConfig:
+    def __init__(self, project_root='/workspace/repos'):
+        # --- Base Paths ---
+        self.PROJECT_ROOT = Path(project_root)
+        self.DATASETS_ROOT = self.PROJECT_ROOT / 'datasets'
+        self.DATAFRAMES_ROOT = self.PROJECT_ROOT / 'drone-loc-no-gps/Dataframes'
+        self.UAV_VISLOC_ROOT = self.DATASETS_ROOT / 'UAV_VisLoc_dataset'
+        self.AERIAL_VL_ROOT = self.DATASETS_ROOT / 'Aerial_VL_dataset'
+        self.THUMBNAILS_OUTPUT_DIR = self.DATASETS_ROOT / 'train_thumbnails'
 
-    # TODO LZ: refactor variables
-    visloc_satelite_taizhou_output_csv='/workspace/repos/drone-loc-no-gps/Dataframes/Taizhou-1.csv'
-    aerialvl_satelite_shandong_output_csv='/workspace/repos/drone-loc-no-gps/Dataframes/Shandong-1.csv'
-    visloc_satelite_shandan_output_csv='/workspace/repos/drone-loc-no-gps/Dataframes/Shandan.csv'
-    visloc_satelite_yunnan_output_csv='/workspace/repos/drone-loc-no-gps/Dataframes/Yunnan.csv'
+        # --- Regeneration Flags ---
+        self.force_regenerate_thumbnails = False
+        self.force_regenerate_place_ids = False
 
-    visloc_satelite_Changjiang_20_output_csv='/workspace/repos/drone-loc-no-gps/Dataframes/Changjiang-20.csv'
-    visloc_satelite_Changjiang_23_output_csv='/workspace/repos/drone-loc-no-gps/Dataframes/Changjiang-23.csv'
-    visloc_satelite_Taizhou_6_output_csv='/workspace/repos/drone-loc-no-gps/Dataframes/Taizhou-6.csv'
-    visloc_satelite_Zhuxi_output_csv='/workspace/repos/drone-loc-no-gps/Dataframes/Zhuxi.csv'
-    visloc_satelite_Donghuayuan_output_csv='/workspace/repos/drone-loc-no-gps/Dataframes/Donghuayuan.csv'
+def main():
+    config = PipelineConfig()
+    config.DATAFRAMES_ROOT.mkdir(parents=True, exist_ok=True)
 
-    thumbnails_generator = ThumbnailsGenerator(
-        output_dir='/workspace/repos/datasets/train_thumbnails',
-        satellite_map_names=[
-            # MapSatellite(csv_path='/workspace/repos/datasets/UAV_VisLoc_dataset/satellite_ coordinates_range.csv',
-            #              thumbnails_satellite_csv_output_path=visloc_satelite_taizhou_output_csv,
-            #              map_tif_path='/workspace/repos/datasets/UAV_VisLoc_dataset/03/satellite03.tif',
-            #              map_name='satellite03.tif',
-            #              region_name='Taizhou-1',
-            #              friendly_name='visloc-Taizhou-1-03-satellite'),
-            # MapSatellite(csv_path='/workspace/repos/datasets/UAV_VisLoc_dataset/satellite_ coordinates_range.csv',
-            #              thumbnails_satellite_csv_output_path=visloc_satelite_yunnan_output_csv,
-            #              map_tif_path='/workspace/repos/datasets/UAV_VisLoc_dataset/05/satellite05.tif',
-            #              map_name='satellite05.tif',
-            #              region_name='Yunnan',
-            #              friendly_name='visloc-Yunnan-05-satellite'),
-            # MapSatellite(csv_path='/workspace/repos/datasets/Aerial_VL_dataset/coordinates_range.csv',
-            #              thumbnails_satellite_csv_output_path=aerialvl_satelite_shandong_output_csv,
-            #              map_tif_path='/workspace/repos/datasets/Aerial_VL_dataset/geo_referenced_map/@small_map@120.42114259488751@36.604504047017464@120.4568481612987@36.586863027841225@.tif',
-            #              map_name='@small_map@120.42114259488751@36.604504047017464@120.4568481612987@36.586863027841225@.tif',
-            #              region_name='Shandong-1',
-            #              friendly_name='aerialal-Shandong-1-01'),
-            
-            MapSatellite(csv_path='/workspace/repos/datasets/UAV_VisLoc_dataset/satellite_ coordinates_range.csv',
-                         thumbnails_satellite_csv_output_path=visloc_satelite_Changjiang_20_output_csv,
-                         map_tif_path='/workspace/repos/datasets/UAV_VisLoc_dataset/01/satellite01.tif',
-                         map_name='satellite01.tif',
-                         region_name='Changjiang-20',
-                         friendly_name='visloc-Changjiang-20-satellite'),  
-            MapSatellite(csv_path='/workspace/repos/datasets/UAV_VisLoc_dataset/satellite_ coordinates_range.csv',
-                         thumbnails_satellite_csv_output_path=visloc_satelite_Changjiang_23_output_csv,
-                         map_tif_path='/workspace/repos/datasets/UAV_VisLoc_dataset/02/satellite02.tif',
-                         map_name='satellite02.tif',
-                         region_name='Changjiang-23',
-                         friendly_name='visloc-Changjiang-23-satellite'),   
-            MapSatellite(csv_path='/workspace/repos/datasets/UAV_VisLoc_dataset/satellite_ coordinates_range.csv',
-                         thumbnails_satellite_csv_output_path=visloc_satelite_Taizhou_6_output_csv,
-                         map_tif_path='/workspace/repos/datasets/UAV_VisLoc_dataset/04/satellite04.tif',
-                         map_name='satellite04.tif',
-                         region_name='Taizhou-6',
-                         friendly_name='visloc-Taizhou-6-satellite'),   
-            MapSatellite(csv_path='/workspace/repos/datasets/UAV_VisLoc_dataset/satellite_ coordinates_range.csv',
-                         thumbnails_satellite_csv_output_path=visloc_satelite_Zhuxi_output_csv,
-                         map_tif_path='/workspace/repos/datasets/UAV_VisLoc_dataset/06/satellite06.tif',
-                         map_name='satellite06.tif',
-                         region_name='Zhuxi',
-                         friendly_name='visloc-Zhuxi-satellite'),
-            MapSatellite(csv_path='/workspace/repos/datasets/UAV_VisLoc_dataset/satellite_ coordinates_range.csv',
-                         thumbnails_satellite_csv_output_path=visloc_satelite_Donghuayuan_output_csv,
-                         map_tif_path='/workspace/repos/datasets/UAV_VisLoc_dataset/07/satellite07.tif',
-                         map_name='satellite07.tif',
-                         region_name='Donghuayuan',
-                         friendly_name='visloc-Donghuayuan-satellite'),                           
-        ],
-        is_rebuild_csv=False,
-        height_size=224,
-        width_size=224
-    )
+    DATA_CONFIG = [
+        {'set_type': 'train', 'region_name': 'Taizhou-1', 'uav_visloc_id': '03', 'map_filename': 'satellite03.tif'},
+        {'set_type': 'train', 'region_name': 'Yunnan', 'uav_visloc_id': '05', 'map_filename': 'satellite05.tif'},
+        {'set_type': 'train', 'region_name': 'Changjiang-20', 'uav_visloc_id': '01', 'map_filename': 'satellite01.tif'},
+        {'set_type': 'train', 'region_name': 'Changjiang-23', 'uav_visloc_id': '02', 'map_filename': 'satellite02.tif'},
+        {'set_type': 'train', 'region_name': 'Taizhou-6', 'uav_visloc_id': '04', 'map_filename': 'satellite04.tif'},
+        {'set_type': 'train', 'region_name': 'Zhuxi', 'uav_visloc_id': '06', 'map_filename': 'satellite06.tif'},
+        {'set_type': 'train', 'region_name': 'Donghuayuan', 'uav_visloc_id': '07', 'map_filename': 'satellite07.tif'},
+        {'set_type': 'val', 'region_name': 'Shandan', 'uav_visloc_id': '11', 'map_filename': 'satellite11.tif'},
+        # {'set_type': 'val', 'region_name': 'Shandong-1', 'dataset_type': 'AerialVL'}, # Example for other datasets
+    ]
 
-    # thumbnails_generator.generate_thumbnails()
+    all_csv_paths = {}
+    for d_conf in DATA_CONFIG:
+        region_name = d_conf['region_name']
+        output_csv_path = config.DATAFRAMES_ROOT / f"{region_name}.csv"
+        all_csv_paths[region_name] = str(output_csv_path)
 
-    # uav_visloc = UavCropGenerator(
-    #     csv_path='/workspace/repos/datasets/UAV_VisLoc_dataset/03/03.csv',
-    #     cropped_uav_csv_output_path=visloc_satelite_taizhou_output_csv,
-    #     cropped_output_dir='/workspace/repos/datasets/train_thumbnails',
-    #     uav_images_dir='/workspace/repos/datasets/UAV_VisLoc_dataset/03/drone',
-    #     region_name='Taizhou-1',
-    #     friendly_name='visloc-Taizhou-1-03-uav'
-    # )
-    # uav_visloc.generate_thumbnails()
+        # Caching check for thumbnail generation
+        thumb_dir = config.THUMBNAILS_OUTPUT_DIR / region_name
+        skip_generation = False
 
-    # uav_visloc_yunan = UavCropGenerator(
-    #     csv_path='/workspace/repos/datasets/UAV_VisLoc_dataset/05/05.csv',
-    #     cropped_uav_csv_output_path=visloc_satelite_yunnan_output_csv,
-    #     cropped_output_dir='/workspace/repos/datasets/train_thumbnails',
-    #     uav_images_dir='/workspace/repos/datasets/UAV_VisLoc_dataset/05/drone',
-    #     region_name='Yunnan',
-    #     friendly_name='visloc-Yunnan-05-uav'
-    # )
-    # uav_visloc_yunan.generate_thumbnails()
-    # # # TODO: smart if
+        if config.force_regenerate_thumbnails:
+            if output_csv_path.exists():
+                print(f"Force regenerate: Removing existing CSV: {output_csv_path}")
+                os.remove(output_csv_path)
+            if thumb_dir.exists():
+                print(f"Force regenerate: Removing existing thumbnail directory: {thumb_dir}")
+                shutil.rmtree(thumb_dir)
+        elif thumb_dir.exists() and any(thumb_dir.iterdir()) and output_csv_path.exists():
+            try:
+                df = pd.read_csv(output_csv_path)
+                if 'friendly-name' in df.columns and df['friendly-name'].str.contains('-uav').any() and df['friendly-name'].str.contains('-satellite').any():
+                    print(f"\nSkipping thumbnail generation for '{region_name}', already processed.")
+                    skip_generation = True
+            except (pd.errors.EmptyDataError, KeyError):
+                pass  # File is empty or malformed, will regenerate
 
-    # uav_visloc_shandan = UavCropGenerator(
-    #     csv_path='/workspace/repos/datasets/UAV_VisLoc_dataset/11/11.csv',
-    #     cropped_uav_csv_output_path=visloc_satelite_shandan_output_csv,
-    #     cropped_output_dir='/workspace/repos/datasets/train_thumbnails',
-    #     uav_images_dir='/workspace/repos/datasets/UAV_VisLoc_dataset/11/drone',
-    #     region_name='Shandan',
-    #     friendly_name='visloc-Shandan-11-uav'
-    # )
-    # uav_visloc_shandan.generate_thumbnails()
-    # UavCropGenerator(
-    #     csv_path='/workspace/repos/datasets/UAV_VisLoc_dataset/01/01.csv',
-    #     cropped_uav_csv_output_path=visloc_satelite_Changjiang_20_output_csv,
-    #     cropped_output_dir='/workspace/repos/datasets/train_thumbnails',
-    #     uav_images_dir='/workspace/repos/datasets/UAV_VisLoc_dataset/01/drone',
-    #     region_name='Changjiang-20',
-    #     friendly_name='visloc-Changjiang-20-uav'
-    # )
-    
-    # UavCropGenerator(
-    #     csv_path='/workspace/repos/datasets/UAV_VisLoc_dataset/02/02.csv',
-    #     cropped_uav_csv_output_path=visloc_satelite_Changjiang_23_output_csv,
-    #     cropped_output_dir='/workspace/repos/datasets/train_thumbnails',
-    #     uav_images_dir='/workspace/repos/datasets/UAV_VisLoc_dataset/02/drone',
-    #     region_name='Changjiang-23',
-    #     friendly_name='visloc-Changjiang-23-uav'
-    # )
-    
-    # UavCropGenerator(
-    #     csv_path='/workspace/repos/datasets/UAV_VisLoc_dataset/04/04.csv',
-    #     cropped_uav_csv_output_path=visloc_satelite_Taizhou_6_output_csv,
-    #     cropped_output_dir='/workspace/repos/datasets/train_thumbnails',
-    #     uav_images_dir='/workspace/repos/datasets/UAV_VisLoc_dataset/04/drone',
-    #     region_name='Taizhou-6',
-    #     friendly_name='visloc-Taizhou_6-uav'
-    # )
-    
-    # UavCropGenerator(
-    #     csv_path='/workspace/repos/datasets/UAV_VisLoc_dataset/06/06.csv',
-    #     cropped_uav_csv_output_path=visloc_satelite_Zhuxi_output_csv,
-    #     cropped_output_dir='/workspace/repos/datasets/train_thumbnails',
-    #     uav_images_dir='/workspace/repos/datasets/UAV_VisLoc_dataset/06/drone',
-    #     region_name='Zhuxi',
-    #     friendly_name='visloc-Zhuxi-uav'
-    # )
-    
-    # UavCropGenerator(
-    #     csv_path='/workspace/repos/datasets/UAV_VisLoc_dataset/07/07.csv',
-    #     cropped_uav_csv_output_path=visloc_satelite_Donghuayuan_output_csv,
-    #     cropped_output_dir='/workspace/repos/datasets/train_thumbnails',
-    #     uav_images_dir='/workspace/repos/datasets/UAV_VisLoc_dataset/07/drone',
-    #     region_name='Donghuayuan',
-    #     friendly_name='visloc-Donghuayuan-uav'
-    # )
-    # place_id_generator = PlaceIdGenerator(
-    #     csv_thumbnails_paths=[
-    #         visloc_satelite_Donghuayuan_output_csv,
-    #         visloc_satelite_Zhuxi_output_csv,
-    #         visloc_satelite_Taizhou_6_output_csv,
-    #         visloc_satelite_Changjiang_23_output_csv,
-    #         visloc_satelite_Changjiang_20_output_csv
-    #         ]
-    # )
+        if not skip_generation:
+            # --- Satellite Thumbnail Generation ---
+            map_tif_path = config.UAV_VISLOC_ROOT / d_conf['uav_visloc_id'] / d_conf['map_filename']
+            map_sat = MapSatellite(
+                csv_path=str(config.UAV_VISLOC_ROOT / 'satellite_ coordinates_range.csv'),
+                thumbnails_satellite_csv_output_path=str(output_csv_path),
+                map_tif_path=str(map_tif_path),
+                region_name=region_name,
+                friendly_name=f"visloc-{region_name}-{d_conf['uav_visloc_id']}-satellite"
+            )
+            thumb_gen = ThumbnailsGenerator(
+                output_dir=str(config.THUMBNAILS_OUTPUT_DIR),
+                satellite_map_names=[map_sat],
+                is_rebuild_csv=True # Rebuild for each new region processing
+            )
+            thumb_gen.generate_thumbnails()
 
-    
-    datamodule = MapsDataModule(
-        thumbnails_csv_file_paths=[visloc_satelite_taizhou_output_csv, 
-                                   visloc_satelite_yunnan_output_csv,
-                                    visloc_satelite_Donghuayuan_output_csv,
-                                    visloc_satelite_Zhuxi_output_csv,
-                                    visloc_satelite_Taizhou_6_output_csv,
-                                    visloc_satelite_Changjiang_23_output_csv,
-                                    visloc_satelite_Changjiang_20_output_csv
-                                   ],
+            # --- UAV Crop Generation ---
+            uav_gen = UavCropGenerator(
+                csv_path=str(config.UAV_VISLOC_ROOT / d_conf['uav_visloc_id'] / f"{d_conf['uav_visloc_id']}.csv"),
+                cropped_uav_csv_output_path=str(output_csv_path),
+                cropped_output_dir=str(config.THUMBNAILS_OUTPUT_DIR),
+                uav_images_dir=str(config.UAV_VISLOC_ROOT / d_conf['uav_visloc_id'] / 'drone'),
+                region_name=region_name,
+                friendly_name=f"visloc-{region_name}-{d_conf['uav_visloc_id']}-uav"
+            )
+            uav_gen.generate_thumbnails()
+
+    # --- Place ID Generation ---
+    print("\n--- Starting Place ID Generation ---")
+    for d_conf in DATA_CONFIG:
+        region_name = d_conf['region_name']
+        csv_path = all_csv_paths[region_name]
+        is_val = d_conf['set_type'] == 'val'
+        PlaceIdGenerator(
+            csv_thumbnails_paths=[csv_path],
+            is_validation_set=is_val,
+            force_regenerate=config.force_regenerate_place_ids
+        )
+
+    # --- Prepare Data for Model Training ---
+    train_csvs: List[str] = [path for name, path in all_csv_paths.items() if any(d['region_name'] == name and d['set_type'] == 'train' for d in DATA_CONFIG)]
+    val_csvs:List[str]  = [path for name, path in all_csv_paths.items() if any(d['region_name'] == name and d['set_type'] == 'val' for d in DATA_CONFIG)]
+
+    # Keep original variables for datamodule and checkpoint as requested
+    visloc_satelite_taizhou_output_csv = all_csv_paths.get('Taizhou-1')
+    visloc_satelite_yunnan_output_csv = all_csv_paths.get('Yunnan')
+    visloc_satelite_Donghuayuan_output_csv = all_csv_paths.get('Donghuayuan')
+    visloc_satelite_Zhuxi_output_csv = all_csv_paths.get('Zhuxi')
+    visloc_satelite_Taizhou_6_output_csv = all_csv_paths.get('Taizhou-6')
+    visloc_satelite_Changjiang_23_output_csv = all_csv_paths.get('Changjiang-23')
+    visloc_satelite_Changjiang_20_output_csv = all_csv_paths.get('Changjiang-20')
+    visloc_satelite_shandan_output_csv = all_csv_paths.get('Shandan')
+
+    datamodule = MapsDataModule( # As requested, this part is kept as is
+        thumbnails_csv_file_paths=train_csvs,
         batch_size=32,
-        val_set_names=[visloc_satelite_shandan_output_csv]
+        val_set_names=val_csvs
     )
 
     model = VPRModel(
@@ -249,7 +198,9 @@ if __name__ == '__main__':
     trainer.fit(model=model, datamodule=datamodule)
 
 
-    #~~~~~~~~~~
     FULL_MODEL_PATH = 'full_model.pth'
-    torch.save(model, FULL_MODEL_PATH)
-    print(f"Saved : {FULL_MODEL_PATH}")
+    torch.save(model.state_dict(), FULL_MODEL_PATH)
+    print(f"Saved model state_dict to: {FULL_MODEL_PATH}")
+
+if __name__ == '__main__':
+    main()

@@ -1,4 +1,5 @@
 from collections import namedtuple
+from pathlib import Path
 
 Coordinates = namedtuple('Coordinates', ['lt_lat', 'lt_lon', 'rb_lat', 'rb_lon'])
 
@@ -8,13 +9,12 @@ class MapSatellite:
                  csv_path,
                  thumbnails_satellite_csv_output_path,
                  map_tif_path,
-                 map_name,# must be mapname from the row in file selected in csv_path
                  region_name,
                  friendly_name=None):
         self.csv_path = csv_path
         self.thumbnails_satellite_csv_output_path=thumbnails_satellite_csv_output_path
         self.map_tif_path=map_tif_path
-        self.map_name = map_name
+        self.map_name = Path(map_tif_path).name
         self.region_name = region_name
         self.friendly_name = friendly_name if friendly_name else map_name
         self.coordinates = None
