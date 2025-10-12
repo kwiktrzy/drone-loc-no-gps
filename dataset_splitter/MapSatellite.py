@@ -1,7 +1,7 @@
 from collections import namedtuple
 from pathlib import Path
 
-Coordinates = namedtuple("Coordinates", ["lt_lat", "lt_lon", "rb_lat", "rb_lon"])
+from dataset_splitter.AbstractGenerator import GPSCoordinates
 
 
 class MapSatellite:
@@ -19,9 +19,11 @@ class MapSatellite:
         self.map_name = Path(map_tif_path).name
         self.region_name = region_name
         self.friendly_name = friendly_name if friendly_name else self.map_name
-        self.coordinates = None
+        self.coordinates: GPSCoordinates = None
 
     def set_coordinates(
         self, lt_lat: float, lt_lon: float, rb_lat: float, rb_lon: float
     ):
-        self.coordinates: Coordinates = Coordinates(lt_lat, lt_lon, rb_lat, rb_lon)
+        self.coordinates: GPSCoordinates = GPSCoordinates(
+            lt_lat, lt_lon, rb_lat, rb_lon
+        )

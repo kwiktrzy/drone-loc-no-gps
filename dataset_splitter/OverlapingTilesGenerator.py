@@ -9,11 +9,10 @@ from rasterio.windows import Window
 import cv2
 import numpy as np
 import uuid
-import math
 import utm
 
 from dataset_splitter.MapSatellite import MapSatellite
-from AbstractGenerator import GPSCoordinates, AbstractGenerator
+from AbstractGenerator import UTMPatchCoordinates, AbstractGenerator
 
 
 class OverlapingTilesGenerator:
@@ -47,15 +46,6 @@ class OverlapingTilesGenerator:
         )
         return coordinates(lt_lat, lt_lon, rb_lat, rb_lon)
 
-    def __append_row_csv(self, row_append, file_path, is_recreate):
-        # ex. row = { 'id': '1', 'value': 10 }
-        is_file_exists = os.path.isfile(file_path)
-        if is_file_exists and is_recreate:
-            os.remove(file_path)
-            is_file_exists = False
-        df = pd.DataFrame([row_append])
-        df.to_csv(file_path, mode="a", index=False, header=not is_file_exists)
-
     def __save_patch(self, patch, patch_dir_ext):
         success = False
         if self.patch_format_compress[0] == ".png":
@@ -85,34 +75,24 @@ class OverlapingTilesGenerator:
 
         return True
 
-    def __get_patch_gps_coords(
-        self,
-        x_start,
-        y_start,
-        x_end,
-        y_end,
-        img_width,
-        img_height,
-        top_left_lat,
-        top_left_lon,
-        bottom_right_lat,
-        bottom_right_lon,
-    ):
+    def get_patch_utm_coords(self, src, window: Window) -> UTMPatchCoordinates:
+        lt_e, lt_n = src.transform * (window.col_off, window.row_off)
+        rb_e, rb_n = src.transform * (
+            window.col_off + window.width,
+            window.row_off + window.height,
+        )
 
-        lat_per_pixel = (top_left_lat - bottom_right_lat) / img_height
-        lon_per_pixel = (bottom_right_lon - top_left_lon) / img_width
+        center_col = window.col_off + window.width / 2
+        center_row = window.row_off + window.height / 2
+        center_e, center_n = src.transform * (center_col, center_row)
 
-        top_left_crop_lat = top_left_lat - y_start * lat_per_pixel
-        top_left_crop_lon = top_left_lon + x_start * lon_per_pixel
-
-        bottom_right_crop_lat = top_left_lat - y_end * lat_per_pixel
-        bottom_right_crop_lon = top_left_lon + x_end * lon_per_pixel
-
-        return GPSCoordinates(
-            lt_lat=top_left_crop_lat,
-            lt_lon=top_left_crop_lon,
-            rb_lat=bottom_right_crop_lat,
-            rb_lon=bottom_right_crop_lon,
+        return UTMPatchCoordinates(
+            lt_e=lt_e,
+            lt_n=lt_n,
+            rb_e=rb_e,
+            rb_n=rb_n,
+            center_e=center_e,
+            center_n=center_n,
         )
 
     def __calculate_pixel_resolution(self, src, map: MapSatellite):
@@ -123,7 +103,7 @@ class OverlapingTilesGenerator:
             map.coordinates.rb_lat, map.coordinates.rb_lon
         )
 
-        width_meters = abs(lt_utm.e - rb_utm.n)
+        width_meters = abs(lt_utm.e - rb_utm.e)
         height_meters = abs(lt_utm.n - rb_utm.n)
 
         meters_per_pixel_x = width_meters / src.width
@@ -143,29 +123,12 @@ class OverlapingTilesGenerator:
 
         for y_off in range(0, src.height - self.crop_range + 1, step_y):
             for x_off in range(0, src.width - self.crop_range + 1, step_x):
-
                 window = Window(x_off, y_off, self.crop_range, self.crop_range)
                 patch_data = src.read(window=window, boundless=True)
                 patch_cv2 = np.moveaxis(patch_data, 0, -1)
-
                 if patch_cv2.shape[-1] == 3:
                     patch_cv2 = cv2.cvtColor(patch_cv2, cv2.COLOR_RGB2BGR)
-                gps_coords = self.__get_patch_gps_coords(
-                    x_off,
-                    y_off,
-                    self.crop_range,
-                    self.crop_range,
-                    src.width,
-                    src.height,
-                    map.coordinates.lt_lat,
-                    map.coordinates.lt_lon,
-                    map.coordinates.rb_lat,
-                    map.coordinates.rb_lon,
-                )
-
-            lat, lon = self.converters.get_center(gps_coords)
-
-            yield (patch_cv2, gps_coords, lat, lon)
+                yield (patch_cv2, window)
 
     def __crop_map(self, map: MapSatellite):
         with rasterio.open(map.map_tif_path) as src:
@@ -174,13 +137,17 @@ class OverlapingTilesGenerator:
             print("\n height: ", height_image)
             print("\n channel: ", src.count)
 
+            center_lat, center_lon = self.converters.get_center(map.coordinates)
+            _, _, zone_num, zone_let = utm.from_latlon(center_lat, center_lon)
+            zone_str = f"{zone_num}{zone_let}"
+
             meters_per_pixel_x, meters_per_pixel_y = self.__calculate_pixel_resolution(
                 src, map
             )
-
+            csv_rows = []
             overlap_pixels_x = int(self.overlap_stride_meters / meters_per_pixel_x)
             overlap_pixels_y = int(self.overlap_stride_meters / meters_per_pixel_y)
-            for i, (patch, gps_coords, lat, lon) in enumerate(
+            for i, (patch, window) in enumerate(
                 self.__generate_patches(
                     map=map,
                     src=src,
@@ -188,36 +155,37 @@ class OverlapingTilesGenerator:
                     overlap_pixels_y=overlap_pixels_y,
                 )
             ):
-
+                utm_coords = self.get_patch_utm_coords(src, window)
                 dir_output = f"{self.output_dir}/{map.region_name}"
                 os.makedirs(dir_output, exist_ok=True)
-                patch_dir = f"{dir_output}/patch__{gps_coords.lt_lat}__{gps_coords.lt_lon}__{gps_coords.rb_lat}__{gps_coords.rb_lon}__{uuid.uuid4().hex}"
 
+                patch_filename = f"patch_{int(utm_coords.center_e)}_{int(utm_coords.center_n)}_{uuid.uuid4().hex[:8]}"
                 patch_dir_ext = (
-                    f"{patch_dir.replace('.', '_')}{self.patch_format_compress[0]}"
+                    f"{dir_output}/{patch_filename}{self.patch_format_compress[0]}"
                 )
 
                 row = {
                     "img_path": patch_dir_ext,
-                    "LT_lat": gps_coords.lt_lat,
-                    "LT_lon": gps_coords.lt_lon,
-                    "RB_lat": gps_coords.rb_lat,
-                    "RB_lon": gps_coords.rb_lon,
-                    "lon": lon,
-                    "lat": lat,
+                    "center_e": utm_coords.center_e,
+                    "center_n": utm_coords.center_n,
+                    "lt_e": utm_coords.lt_e,
+                    "lt_n": utm_coords.lt_n,
+                    "rb_e": utm_coords.rb_e,
+                    "rb_n": utm_coords.rb_n,
+                    "zone_utm": zone_str,
                     "patch_width": self.width_size,
                     "patch_height": self.height_size,
                     "region_name": map.region_name,
                     "friendly-name": map.friendly_name,
                 }
-                if i == 1:
-                    self.is_rebuild_csv = False
-                self.__append_row_csv(
-                    row, map.tiles_satellite_csv_output_path, self.is_rebuild_csv
-                )
+                csv_rows.append(row)
 
                 if not self.__save_patch(patch, patch_dir_ext):
                     print(f"Skipping patch due to save error: {patch_dir_ext}")
+
+            self.converters.append_rows_csv(
+                csv_rows, map.tiles_satellite_csv_output_path, self.is_rebuild_csv
+            )
 
     def generate_tiles(self):
         for map in self.satellite_map_names:

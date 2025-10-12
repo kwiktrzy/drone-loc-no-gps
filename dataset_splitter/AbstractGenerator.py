@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from typing import Tuple
 import utm
+import os
+import pandas as pd
 
 
 @dataclass
@@ -16,6 +18,16 @@ class GPSCoordinates:
     lt_lon: float
     rb_lat: float
     rb_lon: float
+
+
+@dataclass
+class UTMPatchCoordinates:
+    lt_e: float
+    lt_n: float
+    rb_e: float
+    rb_n: float
+    center_e: float
+    center_n: float
 
 
 class AbstractGenerator:
@@ -37,3 +49,13 @@ class AbstractGenerator:
         lat = (gps_coords.lt_lat + gps_coords.rb_lat) / 2
         lon = (gps_coords.lt_lon + gps_coords.rb_lon) / 2
         return lat, lon
+
+    @staticmethod
+    def append_rows_csv(append_rows: list, file_path, is_recreate):
+        # ex. row = { 'id': '1', 'value': 10 }
+        is_file_exists = os.path.isfile(file_path)
+        if is_file_exists and is_recreate:
+            os.remove(file_path)
+            is_file_exists = False
+        df = pd.DataFrame(append_rows)
+        df.to_csv(file_path, mode="a", index=False, header=not is_file_exists)
