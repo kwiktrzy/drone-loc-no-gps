@@ -12,7 +12,7 @@ import uuid
 import utm
 
 from dataset_splitter.MapSatellite import MapSatellite
-from AbstractGenerator import UTMPatchCoordinates, AbstractGenerator
+from dataset_splitter.AbstractGenerator import UTMPatchCoordinates, AbstractGenerator
 
 
 class OverlapingTilesGenerator:

@@ -17,7 +17,7 @@ import shutil
 
 
 class PipelineConfig:
-    def __init__(self, project_root="/workspace/repos"):
+    def __init__(self, project_root="/workspace"):
         # --- Base Paths ---
         self.PROJECT_ROOT = Path(project_root)
         self.DATASETS_ROOT = self.PROJECT_ROOT / "datasets"
@@ -43,33 +43,47 @@ class PipelineConfig:
 
         # --- Generation Methods ---
         self.one_to_one_tiles = True
-        self.overlapping_patches_tiles = True
+        self.overlapping_patches_tiles = False
 
 
 def clearup_generated_data(
-    config: PipelineConfig, output_csv_path, thumb_dir, region_name
-):
+    config: PipelineConfig, output_csv_path: Path, thumb_dir: Path, region_name: str
+) -> bool:
     if config.force_regenerate_tiles:
         if output_csv_path.exists():
             print(f"Force regenerate: Removing existing CSV: {output_csv_path}")
-            os.remove(output_csv_path)
+            output_csv_path.unlink()
         if thumb_dir.exists():
             print(f"Force regenerate: Removing existing tile directory: {thumb_dir}")
             shutil.rmtree(thumb_dir)
-    elif thumb_dir.exists() and any(thumb_dir.iterdir()) and output_csv_path.exists():
-        try:
-            df = pd.read_csv(output_csv_path)
-            if (
-                "friendly-name" in df.columns
-                and df["friendly-name"].str.contains("-uav").any()
-                and df["friendly-name"].str.contains("-satellite").any()
-            ):
-                print(
-                    f"\nSkipping tile generation for '{region_name}', already processed."
-                )
-                skip_generation = True
-        except (pd.errors.EmptyDataError, KeyError):
-            pass  # File is empty or malformed, will regenerate
+        return False 
+
+    if not (output_csv_path.exists() and thumb_dir.exists() and any(thumb_dir.iterdir())):
+        return False
+
+    try:
+        df = pd.read_csv(output_csv_path)
+    except (pd.errors.EmptyDataError, FileNotFoundError):
+        return False
+
+    col = None
+    if "friendly-name" in df.columns:
+        col = "friendly-name"
+    elif "friendly_name" in df.columns:
+        col = "friendly_name"
+
+    if col is None:
+        return False
+
+    s = df[col].astype(str)
+    has_uav = s.str.contains("-uav").any()
+    has_sat = s.str.contains("-satellite").any()
+
+    if has_uav and has_sat:
+        print(f"\nSkipping tile generation for '{region_name}', already processed.")
+        return True
+
+    return False
 
 
 def main():
@@ -120,12 +134,30 @@ def main():
             "map_filename": "satellite07.tif",
         },
         {
+            "set_type": "train",
+            "region_name": "Huzhou-3",
+            "uav_visloc_id": "08",
+            "map_filename": "satellite08.tif",
+        },
+        # {
+        #     "set_type": "train",
+        #     "region_name": "Huzhou-3-1",
+        #     "uav_visloc_id": "09",
+        #     "map_filename": "satellite09.tif",
+        # },
+        {
+            "set_type": "train",
+            "region_name": "Huailai",
+            "uav_visloc_id": "10",
+            "map_filename": "satellite10.tif",
+        },
+        {
             "set_type": "val",
             "region_name": "Shandan",
             "uav_visloc_id": "11",
             "map_filename": "satellite11.tif",
         },
-        # {'set_type': 'val', 'region_name': 'Shandong-1', 'dataset_type': 'AerialVL'}, # Example for other datasets
+        # {'set_type': 'Huailai', 'region_name': 'Shandong-1', 'dataset_type': 'AerialVL'},
     ]
 
     all_csv_paths_one_to_one = {}
@@ -137,11 +169,9 @@ def main():
         if config.one_to_one_tiles:
             output_csv_path = config.DATAFRAMES_ONE_TO_ONE_DIR / f"{region_name}.csv"
             all_csv_paths_one_to_one[region_name] = str(output_csv_path)
-            # Caching check for tile generation
             thumb_dir = config.THUMBNAILS_ONE_TO_ONE_OUTPUT_DIR / region_name
-            skip_generation = False
-            clearup_generated_data(config, output_csv_path, thumb_dir, region_name)
 
+            skip_generation = clearup_generated_data(config, output_csv_path, thumb_dir, region_name)
             if not skip_generation:
                 # --- Satellite Tile Generation ---
                 map_tif_path = (
@@ -161,7 +191,7 @@ def main():
                 thumb_gen = TilesGenerator(
                     output_dir=str(config.THUMBNAILS_ONE_TO_ONE_OUTPUT_DIR),
                     satellite_map_names=[map_sat],
-                    is_rebuild_csv=True,  # Rebuild for each new region processing
+                    is_rebuild_csv=config.force_regenerate_tiles,  # Rebuild for each new region processing
                 )
                 thumb_gen.generate_tiles()
 
@@ -182,15 +212,11 @@ def main():
                 )
                 uav_gen.generate_tiles()
         if config.overlapping_patches_tiles:
-            output_csv_path = (
-                config.DATAFRAMES_OVERLAPPING_PATCHES_DIR / f"{region_name}.csv"
-            )
+            output_csv_path = config.DATAFRAMES_OVERLAPPING_PATCHES_DIR / f"{region_name}.csv"
             all_csv_paths_overlapping_patches[region_name] = str(output_csv_path)
-            # Caching check for tile generation
-            thumb_dir = config.THUMBNAILS_ONE_TO_ONE_OUTPUT_DIR / region_name
-            skip_generation = False
-            clearup_generated_data(config, output_csv_path, thumb_dir, region_name)
+            thumb_dir = config.THUMBNAILS_OVERLAPPING_PATCHES_OUTPUT_DIR / region_name
 
+            skip_generation = clearup_generated_data(config, output_csv_path, thumb_dir, region_name)
             if not skip_generation:
                 # --- Satellite Tile Generation ---
                 map_tif_path = (
@@ -333,7 +359,7 @@ def main():
         num_nodes=1,
         num_sanity_val_steps=0,  # runs a validation step before stating training
         precision="16-mixed",  # we use half precision to reduce  memory usage
-        max_epochs=10,
+        max_epochs=80,
         check_val_every_n_epoch=1,  # run validation every epoch
         callbacks=[
             checkpoint_cb

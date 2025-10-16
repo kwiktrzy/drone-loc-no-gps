@@ -2,7 +2,7 @@ from typing import List
 import pandas as pd
 import numpy as np
 import os
-from AbstractGenerator import AbstractGenerator
+from dataset_splitter.AbstractGenerator import UTMPatchCoordinates, AbstractGenerator
 from sklearn.neighbors import NearestNeighbors
 
 

@@ -77,10 +77,10 @@ class SatelliteUavDataset(Dataset):
         self.q_image_paths = q_uav["img_path"].tolist()
 
         self.db_utm_np = np.array(
-            db_satellite[["e", "n_utm"]].values
+            db_satellite[["e_utm", "n_utm"]].values
         )  # Wartości z dwóch kolumn
         self.q_utm_np = np.array(
-            q_uav[["e", "n_utm"]].values
+            q_uav[["e_utm", "n_utm"]].values
         )  # Wartości z dwóch kolumn
 
     def get_positives(self):

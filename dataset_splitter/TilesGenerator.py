@@ -122,6 +122,9 @@ class TilesGenerator:
         if is_file_exists and is_recreate:
             os.remove(file_path)
             is_file_exists = False
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        elif not is_file_exists: 
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
         df = pd.DataFrame([row_append])
         df.to_csv(file_path, mode="a", index=False, header=not is_file_exists)
 
