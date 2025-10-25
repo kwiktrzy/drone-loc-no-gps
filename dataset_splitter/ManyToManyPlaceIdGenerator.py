@@ -86,6 +86,8 @@ class ManyToManyPlaceIdGenerator:
                     "reference_lat": reference_point_uav["lat"],
                     "lon": neighbour["lon"],
                     "lat": neighbour["lat"],
+                    "width": neighbour["patch_width"],
+                    "height": neighbour["patch_height"],
                     "source_file_path": self.csv_tiles_path,
                 }
                 csv_rows.append(row)

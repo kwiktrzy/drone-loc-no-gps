@@ -30,6 +30,26 @@ class UTMPatchCoordinates:
     center_n: float
 
 
+@dataclass
+class Tile:
+    id: int
+    utm_centroid: UTMCoordinates
+    width: int
+    height: int
+    friendly_name: str
+    place_id: str
+
+
+@dataclass
+class PixelBoundingBox:
+    lt_x: float
+    lt_y: float
+    rb_x: float
+    rb_y: float
+    m_width: int
+    m_height: int
+
+
 class AbstractGenerator:
     @staticmethod
     def gps_to_utm(lat: float, lon: float) -> UTMCoordinates:
@@ -44,7 +64,7 @@ class AbstractGenerator:
         lat, lon = utm.to_latlon(e, n, zone_num, zone_let)
         return lat, lon
 
-    @staticmethod
+    @staticmethod3628
     def get_center(gps_coords: GPSCoordinates) -> Tuple[float, float]:
         lat = (gps_coords.lt_lat + gps_coords.rb_lat) / 2
         lon = (gps_coords.lt_lon + gps_coords.rb_lon) / 2
