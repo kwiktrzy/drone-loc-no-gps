@@ -3,6 +3,7 @@ from typing import List
 import pytorch_lightning as pl
 
 from dataloaders.MapsDataloader import MapsDataModule
+from dataset_splitter.ManyToManyPlaceIdGenerator import ManyToManyPlaceIdGenerator
 from dataset_splitter.MapSatellite import MapSatellite
 from dataset_splitter.TilesGenerator import TilesGenerator
 from dataset_splitter.OverlapingTilesGenerator import OverlapingTilesGenerator
@@ -56,11 +57,12 @@ def clearup_generated_data(
         if thumb_dir.exists():
             print(f"Force regenerate: Removing existing tile directory: {thumb_dir}")
             shutil.rmtree(thumb_dir)
-        return False 
-
-    if not (output_csv_path.exists() and thumb_dir.exists() and any(thumb_dir.iterdir())):
         return False
 
+    if not (
+        output_csv_path.exists() and thumb_dir.exists() and any(thumb_dir.iterdir())
+    ):
+        return False
     try:
         df = pd.read_csv(output_csv_path)
     except (pd.errors.EmptyDataError, FileNotFoundError):
@@ -171,7 +173,9 @@ def main():
             all_csv_paths_one_to_one[region_name] = str(output_csv_path)
             thumb_dir = config.THUMBNAILS_ONE_TO_ONE_OUTPUT_DIR / region_name
 
-            skip_generation = clearup_generated_data(config, output_csv_path, thumb_dir, region_name)
+            skip_generation = clearup_generated_data(
+                config, output_csv_path, thumb_dir, region_name
+            )
             if not skip_generation:
                 # --- Satellite Tile Generation ---
                 map_tif_path = (
@@ -212,11 +216,15 @@ def main():
                 )
                 uav_gen.generate_tiles()
         if config.overlapping_patches_tiles:
-            output_csv_path = config.DATAFRAMES_OVERLAPPING_PATCHES_DIR / f"{region_name}.csv"
+            output_csv_path = (
+                config.DATAFRAMES_OVERLAPPING_PATCHES_DIR / f"{region_name}.csv"
+            )
             all_csv_paths_overlapping_patches[region_name] = str(output_csv_path)
             thumb_dir = config.THUMBNAILS_OVERLAPPING_PATCHES_OUTPUT_DIR / region_name
 
-            skip_generation = clearup_generated_data(config, output_csv_path, thumb_dir, region_name)
+            skip_generation = clearup_generated_data(
+                config, output_csv_path, thumb_dir, region_name
+            )
             if not skip_generation:
                 # --- Satellite Tile Generation ---
                 map_tif_path = (
@@ -239,6 +247,7 @@ def main():
                     is_rebuild_csv=True,  # Rebuild for each new region processing
                 )
                 thumb_gen.generate_tiles()
+
                 # --- UAV Crop Generation ---
                 uav_gen = UavCropGenerator(
                     csv_path=str(
@@ -270,6 +279,18 @@ def main():
                 is_validation_set=is_val,
                 force_regenerate=config.force_regenerate_place_ids,
             )
+        if config.overlapping_patches_tiles:
+            csv_path = all_csv_paths_overlapping_patches[region_name]
+            csv_output_path = csv_path.replace(
+                region_name, f"many_to_many-{region_name}"
+            )
+            generator = ManyToManyPlaceIdGenerator(
+                csv_tiles_path=csv_path,
+                csv_place_ids_output_path=csv_path,
+                force_regenerate=config.force_regenerate_place_ids,
+                radius_neighbors_meters=50,
+            )
+            generator.generate_place_ids()
 
     # --- Prepare Data for Model Training ---
     train_csvs: List[str] = [

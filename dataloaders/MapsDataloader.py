@@ -1,10 +1,11 @@
 from typing import List
-
+import pandas as pd
 import pytorch_lightning as pl
 from torch.utils.data import DataLoader
 from torchvision import transforms as T
 
 from dataloaders.VisLocDataset import VisLocDataset
+from dataloaders.VisLocOverlappingDataset import VisLocOverlappingDataset
 from dataloaders.AerialVLValDataset import AerialVLValDataset
 
 import dataloaders.VisLocSatelliteUavSeparatedDataset
@@ -20,6 +21,7 @@ TRAIN_DATASET_NAMES = ["visloc-Taizhou-1-03"]
 class MapsDataModule(pl.LightningDataModule):
     def __init__(
         self,
+        is_overlaping_patches_approach=False,
         tiles_csv_file_paths: List[str] = [],
         batch_size=32,
         num_workers=0,
@@ -30,6 +32,7 @@ class MapsDataModule(pl.LightningDataModule):
         image_size=(224, 224),
     ):
         super().__init__()
+        self.is_overlaping_patches_approach = is_overlaping_patches_approach
         self.tiles_csv_file_paths: List[str] = tiles_csv_file_paths
         self.batch_size: int = batch_size
         self.num_workers = num_workers
@@ -111,9 +114,28 @@ class MapsDataModule(pl.LightningDataModule):
             transform=self.train_transform,
         )
 
+    def reload_dataset_overlapping(self):
+
+        # places = places.sample(n=self.image_per_place, replace=True)
+        # LZ change : forcing the addition of both domains at the same time has been added because we want to teach the model to search for similarities between domains. Only images from one domain can be included in the batch,
+        # which artificially inflates b_acc, resulting in a weak eval score.
+
+        dataframe = self.__get_data_frames()
+        self.train_dataset = VisLocOverlappingDataset(
+            dataframe=dataframe,
+            random_sample_from_each_place=self.random_sample_from_each_place,
+            transform=self.train_transform,
+        )
+
     def train_dataloader(self):
-        self.reload()
-        return DataLoader(self.train_dataset, **self.train_loader_config)
+        if self.is_overlaping_patches_approach:
+            self.reload_dataset_overlapping()
+            return DataLoader(
+                self.train_dataset, batch_sampler=None, **self.train_loader_config
+            )
+        else:
+            self.reload()
+            return DataLoader(self.train_dataset, **self.train_loader_config)
 
     def val_dataloader(self):
         val_dataloaders = []
@@ -122,3 +144,13 @@ class MapsDataModule(pl.LightningDataModule):
                 DataLoader(dataset=val_dataset, **self.valid_loader_config)
             )
         return val_dataloaders
+
+    def __get_data_frames(self):
+        df = pd.read_csv(self.tiles_csv_file_paths[0])
+        df = df.sample(frac=1)
+        for idx, csv_path in enumerate(self.tiles_csv_file_paths[1:], start=1):
+            temp_df = pd.read_csv(csv_path)
+            temp_df["place_id"] = temp_df["place_id"] + (idx * 10**5)
+            temp_df = temp_df.sample(frac=1)
+            df = pd.concat([df, temp_df], ignore_index=True)
+        return df.set_index("place_id")
