@@ -1,7 +1,7 @@
 from collections import namedtuple
 from pathlib import Path
 
-from dataset_splitter.AbstractGenerator import GPSCoordinates
+from dataset_splitter.structs.datatypes import GPSCoordinates
 
 
 class MapSatellite:

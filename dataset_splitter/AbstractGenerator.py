@@ -4,20 +4,15 @@ import utm
 import os
 import pandas as pd
 
+from dataset_splitter.MapSatellite import MapSatellite
+from dataset_splitter.structs.datatypes import GPSCoordinates
+
 
 @dataclass
 class UTMCoordinates:
     e: float
     n: float
     zone: str
-
-
-@dataclass
-class GPSCoordinates:
-    lt_lat: float
-    lt_lon: float
-    rb_lat: float
-    rb_lon: float
 
 
 @dataclass
@@ -38,10 +33,12 @@ class Tile:
     height: int
     friendly_name: str
     place_id: str
+    img_path: str
 
 
 @dataclass
 class PixelBoundingBox:
+    id: int
     lt_x: float
     lt_y: float
     rb_x: float
@@ -64,7 +61,7 @@ class AbstractGenerator:
         lat, lon = utm.to_latlon(e, n, zone_num, zone_let)
         return lat, lon
 
-    @staticmethod3628
+    @staticmethod
     def get_center(gps_coords: GPSCoordinates) -> Tuple[float, float]:
         lat = (gps_coords.lt_lat + gps_coords.rb_lat) / 2
         lon = (gps_coords.lt_lon + gps_coords.rb_lon) / 2
@@ -79,3 +76,24 @@ class AbstractGenerator:
             is_file_exists = False
         df = pd.DataFrame(append_rows)
         df.to_csv(file_path, mode="a", index=False, header=not is_file_exists)
+
+    @staticmethod
+    def calculate_pixel_resolution(src, map: MapSatellite):
+        lt_utm = AbstractGenerator.gps_to_utm(
+            map.coordinates.lt_lat, map.coordinates.lt_lon
+        )
+        rb_utm = AbstractGenerator.gps_to_utm(
+            map.coordinates.rb_lat, map.coordinates.rb_lon
+        )
+
+        width_meters = abs(lt_utm.e - rb_utm.e)
+        height_meters = abs(lt_utm.n - rb_utm.n)
+
+        meters_per_pixel_x = width_meters / src.width
+        meters_per_pixel_y = height_meters / src.height
+
+        return meters_per_pixel_x, meters_per_pixel_y
+
+    @staticmethod
+    def get_uav_square_meter():
+        pass

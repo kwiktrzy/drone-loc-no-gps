@@ -42,18 +42,18 @@ class UavCropGenerator:
                 print(f"\nError. Unable to read image: {input_path}")
                 return
 
-            width, height, channels = img.shape
+            height, width, channels = img.shape
             shorter_side = min(width, height)
-            crop_size = shorter_side * self.crop_scale
-            left = (width - crop_size) / 2
-            top = (height - crop_size) / 2
-            right = (width + crop_size) / 2
-            bottom = (height + crop_size) / 2
+            self.crop_size = shorter_side * self.crop_scale
+            left = (width - self.crop_size) / 2
+            top = (height - self.crop_size) / 2
+            right = (width + self.crop_size) / 2
+            bottom = (height + self.crop_size) / 2
             cropped_img = img[int(top) : int(bottom), int(left) : int(right)]
             resized_img = cv2.resize(
                 cropped_img,
                 dsize=(self.target_width_size, self.target_height_size),
-                interpolation=cv2.INTER_LANCZOS4,
+                interpolation=cv2.INTER_AREA,
             )
             if self.patch_format_compress[0] == ".png":
                 cv2.imwrite(
@@ -90,7 +90,8 @@ class UavCropGenerator:
 
         df = pd.read_csv(self.csv_path)
         for index, row in df.iterrows():
-            input_path = f"{self.uav_images_dir}/{row['filename']}"
+            filename = row["filename"]
+            input_path = f"{self.uav_images_dir}/{filename}"
 
             patch_dir = (
                 f"{dir_output}/patch__{row['lat']}__{row['lon']}__{uuid.uuid4().hex}"
@@ -111,7 +112,7 @@ class UavCropGenerator:
                     "patch_width": self.target_width_size,
                     "patch_height": self.target_height_size,
                     "region_name": self.region_name,
-                    "friendly-name": self.friendly_name,
+                    "friendly-name": f"{self.friendly_name}-{filename}",
                 }
 
                 self.__append_row_csv(row, self.cropped_uav_csv_output_path)

@@ -12,6 +12,7 @@ import uuid
 import math
 
 from dataset_splitter.MapSatellite import MapSatellite
+from dataset_splitter.AbstractGenerator import AbstractGenerator
 
 # Hyperparameters
 # Map parameters
@@ -42,9 +43,11 @@ class TilesGenerator:
         self.width_size = width_size
         self.height_size = height_size
         self.patch_format_compress = patch_format_compress
+        self.crop_range_meters = 500
         self.is_rebuild_csv = is_rebuild_csv
         self.satellite_map_names: List[MapSatellite] = satellite_map_names
         self.csv_tiles_paths: List[str] = []
+        self.converters = AbstractGenerator()
 
     def __get_map_coordinates_csv(self, csv_path, mapname):
         df = pd.read_csv(csv_path)
@@ -57,12 +60,20 @@ class TilesGenerator:
         return coordinates(lt_lat, lt_lon, rb_lat, rb_lon)
 
     def __split_sizes(self, total, size):
+
         parts = math.ceil(total / size)
         return [size * i for i in range(parts)]
 
-    def __generate_patches(self, src, width_size=256, height_size=256):
-
+    def __generate_patches(self, src, map: MapSatellite):
         height, width = src.height, src.width
+
+        meters_per_pixel_x, meters_per_pixel_y = (
+            self.converters.calculate_pixel_resolution(src, map)
+        )
+
+        width_size = int(self.crop_range_meters / meters_per_pixel_x)
+        height_size = int(self.crop_range_meters / meters_per_pixel_y)
+
         x_sizes = self.__split_sizes(width, width_size)
         y_sizes = self.__split_sizes(height, height_size)
 
@@ -84,7 +95,14 @@ class TilesGenerator:
                 if patch_cv2.shape[-1] == 3:
                     patch_cv2 = cv2.cvtColor(patch_cv2, cv2.COLOR_RGB2BGR)
 
-                yield patch_cv2, (x_off, y_off, x_end, y_end, width_size, height_size)
+                yield patch_cv2, (
+                    x_off,
+                    y_off,
+                    x_end,
+                    y_end,
+                    width_size,
+                    height_size,
+                )
 
     def __get_gps_coords(
         self,
@@ -136,7 +154,7 @@ class TilesGenerator:
             print("channel: ", src.count)
 
             for i, (patch, coords) in enumerate(
-                self.__generate_patches(src, 448, 448)
+                self.__generate_patches(src, map)
             ):  # height_crop_count, width_crop_count - hyperparameters
                 gps_coords = self.__get_gps_coords(
                     coords[0],
@@ -193,7 +211,7 @@ class TilesGenerator:
                     resized_img = cv2.resize(
                         patch,
                         dsize=(self.width_size, self.height_size),
-                        interpolation=cv2.INTER_LANCZOS4,
+                        interpolation=cv2.INTER_AREA,
                     )
                     cv2.imwrite(
                         patch_dir_ext,

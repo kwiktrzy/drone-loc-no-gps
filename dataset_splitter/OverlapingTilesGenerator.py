@@ -95,22 +95,6 @@ class OverlapingTilesGenerator:
             center_n=center_n,
         )
 
-    def __calculate_pixel_resolution(self, src, map: MapSatellite):
-        lt_utm = self.converters.gps_to_utm(
-            map.coordinates.lt_lat, map.coordinates.lt_lon
-        )
-        rb_utm = self.converters.gps_to_utm(
-            map.coordinates.rb_lat, map.coordinates.rb_lon
-        )
-
-        width_meters = abs(lt_utm.e - rb_utm.e)
-        height_meters = abs(lt_utm.n - rb_utm.n)
-
-        meters_per_pixel_x = width_meters / src.width
-        meters_per_pixel_y = height_meters / src.height
-
-        return meters_per_pixel_x, meters_per_pixel_y
-
     def __generate_patches(
         self,
         src,
@@ -141,9 +125,10 @@ class OverlapingTilesGenerator:
             _, _, zone_num, zone_let = utm.from_latlon(center_lat, center_lon)
             zone_str = f"{zone_num}{zone_let}"
 
-            meters_per_pixel_x, meters_per_pixel_y = self.__calculate_pixel_resolution(
-                src, map
+            meters_per_pixel_x, meters_per_pixel_y = (
+                self.converters.calculate_pixel_resolution(src, map)
             )
+
             csv_rows = []
             overlap_pixels_x = int(self.overlap_stride_meters / meters_per_pixel_x)
             overlap_pixels_y = int(self.overlap_stride_meters / meters_per_pixel_y)
