@@ -4,7 +4,7 @@ from pandas import DataFrame
 import rasterio
 import rasterio.windows
 from rasterio.windows import Window
-from dataset_splitter.MapSatellite import MapSatellite
+from dataset_splitter.structs.MapSatellite import MapSatellite
 from dataset_splitter.AbstractGenerator import (
     PixelBoundingBox,
     Tile,
@@ -114,7 +114,7 @@ class Analyse:
 
         satellite_box: PixelBoundingBox = None
         for tile in tiles_list:
-            print(f"Index: {tile.img_path}")
+            print(f"Index: {tile.id} - Path: {tile.img_path}")
             box = self.__bounding_box_for_picture(tile)
             if is_single_satellite_ref is not None and tile.friendly_name.find(
                 "satellite"

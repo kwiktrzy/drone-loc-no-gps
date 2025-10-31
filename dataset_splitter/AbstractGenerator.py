@@ -4,7 +4,7 @@ import utm
 import os
 import pandas as pd
 
-from dataset_splitter.MapSatellite import MapSatellite
+from dataset_splitter.structs.MapSatellite import MapSatellite
 from dataset_splitter.structs.datatypes import GPSCoordinates
 
 

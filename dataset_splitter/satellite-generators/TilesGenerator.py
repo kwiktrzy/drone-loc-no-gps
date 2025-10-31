@@ -11,7 +11,7 @@ import numpy as np
 import uuid
 import math
 
-from dataset_splitter.MapSatellite import MapSatellite
+from dataset_splitter.structs.MapSatellite import MapSatellite
 from dataset_splitter.AbstractGenerator import AbstractGenerator
 
 # Hyperparameters
