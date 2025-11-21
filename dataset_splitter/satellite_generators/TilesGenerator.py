@@ -43,10 +43,12 @@ class TilesGenerator:
         self.width_size = width_size
         self.height_size = height_size
         self.patch_format_compress = patch_format_compress
-        self.crop_range_meters = 500
+        self.crop_range_meters = 400
         self.is_rebuild_csv = is_rebuild_csv
         self.satellite_map_names: List[MapSatellite] = satellite_map_names
         self.csv_tiles_paths: List[str] = []
+        self.is_crop_out_of_range_skip = True
+        self.max_overflow_ratio: float = 0.2
         self.converters = AbstractGenerator()
 
     def __get_map_coordinates_csv(self, csv_path, mapname):
@@ -76,9 +78,26 @@ class TilesGenerator:
 
         x_sizes = self.__split_sizes(width, width_size)
         y_sizes = self.__split_sizes(height, height_size)
+        
+        skipped_patches = 0
 
         for y_off in y_sizes:
             for x_off in x_sizes:
+                x_end = x_off + width_size
+                y_end = y_off + height_size
+                
+                if self.is_crop_out_of_range_skip:
+                    x_overflow = max(0, x_end - width)
+                    y_overflow = max(0, y_end - height)
+                    
+
+                    x_overflow_ratio = x_overflow / width_size
+                    y_overflow_ratio = y_overflow / height_size
+
+                    if (x_overflow_ratio > self.max_overflow_ratio or 
+                        y_overflow_ratio > self.max_overflow_ratio):
+                        skipped_patches += 1
+                        continue
 
                 window = Window(x_off, y_off, width_size, height_size)
 
@@ -103,6 +122,8 @@ class TilesGenerator:
                     width_size,
                     height_size,
                 )
+        if skipped_patches > 0:
+            print(f"Skipped {skipped_patches} crops with overflow")
 
     def __get_gps_coords(
         self,
@@ -172,9 +193,9 @@ class TilesGenerator:
                 if i == 0:
                     os.makedirs(dir_output, exist_ok=True)
 
-                patch_dir = f"{dir_output}/patch__{gps_coords[0]}__{gps_coords[1]}__{gps_coords[2]}__{gps_coords[3]}__{uuid.uuid4().hex}"
+                patch_name = f"patch__{gps_coords[0]}__{gps_coords[1]}__{gps_coords[2]}__{gps_coords[3]}__{uuid.uuid4().hex}"
                 patch_dir_ext = (
-                    f"{patch_dir.replace('.', '_')}{self.patch_format_compress[0]}"
+                    f"{dir_output}/{patch_name.replace('.', '_')}{self.patch_format_compress[0]}"
                 )
                 # place_id, source
                 lat = (gps_coords[0] + gps_coords[2]) / 2
@@ -208,14 +229,19 @@ class TilesGenerator:
                     )
                 elif self.patch_format_compress[0] == ".jpg":
 
-                    resized_img = cv2.resize(
-                        patch,
-                        dsize=(self.width_size, self.height_size),
-                        interpolation=cv2.INTER_AREA,
-                    )
+                    # resized_img = cv2.resize(
+                    #     patch,
+                    #     dsize=(self.width_size, self.height_size),
+                    #     interpolation=cv2.INTER_AREA,
+                    # )
+                    # cv2.imwrite(
+                    #     patch_dir_ext,
+                    #     resized_img,
+                    #     [cv2.IMWRITE_JPEG_QUALITY, self.patch_format_compress[1]],
+                    # )
                     cv2.imwrite(
                         patch_dir_ext,
-                        resized_img,
+                        patch,
                         [cv2.IMWRITE_JPEG_QUALITY, self.patch_format_compress[1]],
                     )
                 else:

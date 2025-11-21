@@ -14,8 +14,8 @@ class UavSmallerCropGenerator:
         uav_images_dir="",
         region_name="",
         friendly_name="",
-        grid_size=4,
-        patch_format_compress=(".jpg", 90),
+        grid_size=1,
+        patch_format_compress=(".jpg", 100),
         target_width_size=224,
         target_height_size=224,
     ):
@@ -29,7 +29,7 @@ class UavSmallerCropGenerator:
         self.target_width_size = target_width_size
         self.target_height_size = target_height_size
         self.grid_size = grid_size
-        self.csv_header_written = False
+        self.csv_header_written = True
 
     def generate_tiles(self):
         dir_output = f"{self.cropped_output_dir}/{self.region_name}"
@@ -50,11 +50,11 @@ class UavSmallerCropGenerator:
             input_path = f"{self.uav_images_dir}/{filename}"
 
             patch_dir_base = (
-                f"{dir_output}/patch__{row['lat']}__{row['lon']}__{uuid.uuid4().hex}"
+                f"patch__{row['lat']}__{row['lon']}__{uuid.uuid4().hex}"
             )
             patch_dir_ext_base = patch_dir_base.replace('.', '_')
 
-            if self.__process_image(input_path, patch_dir_ext_base, row):
+            if self.__process_image(input_path, f"{dir_output}/{patch_dir_ext_base}", row):
                 print(f"\rGenerated uav crops:{index + 1}/{total_images}: {filename}", end="", flush=True)
             else:
                 print(f"\nSkipped: {filename}")
@@ -136,7 +136,7 @@ class UavSmallerCropGenerator:
                         "patch_width": self.target_width_size, 
                         "patch_height": self.target_height_size,
                         "region_name": self.region_name,
-                        "friendly-name": f"{self.friendly_name}-{source_row['filename']}",
+                        "friendly-name": f"{self.friendly_name}-{source_row['filename']}-{indx}",
                     }
 
                     self.__append_row_csv(new_row, self.cropped_uav_csv_output_path)

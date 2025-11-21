@@ -242,27 +242,30 @@ class VPRModel(pl.LightningModule):
             short_val_name = Path(val_set_name).stem
             feats = torch.concat(val_step_outputs[i], dim=0)
 
-            if "Shandong-1" in val_set_name:
-                # split to ref and queries
+            if "Shandan" in short_val_name:
+                num_references = len(val_dataset.db_image_paths)
+                positives = val_dataset.get_positives()
+                
+                variant = "v1" if "v1" in short_val_name else ("v2" if "v2" in short_val_name else "base")
+                
+                print(f"\n Shandan ({variant}): {short_val_name}")
+                print(f" Queries: {len(positives)}")
+                print(f" References: {num_references}")
+                
+                cnts = np.array([len(p) for p in positives])
+                zero_pos = (cnts == 0).sum()
+                print(f" Q with 0 positives: {zero_pos} / {len(cnts)}")
+                if len(cnts) > 0:
+                    print(
+                        " positives per Q (median/mean/90p):",
+                        f"{np.median(cnts):.1f} / {cnts.mean():.1f} / {np.quantile(cnts, 0.9):.1f}",
+                    )
+
+            elif "Shandong-1" in short_val_name:
                 num_references = len(val_dataset.db_image_paths)
                 positives = val_dataset.get_positives()
                 print(f"Queries: {len(positives)}")
                 print(f"References: {num_references}")
-            elif "Shandan" in val_set_name:
-                # split to ref and queries
-                num_references = len(val_dataset.db_image_paths)
-                positives = val_dataset.get_positives()
-                print("\n Shandan:")
-                print(f"\n Queries: {len(positives)}")
-                print(f"\n References: {num_references}")
-                cnts = np.array([len(p) for p in positives])
-                print("\nQ with 0 positives:", (cnts == 0).sum(), "/", len(cnts))
-                print(
-                    "\npositives per Q (median/mean/90p):",
-                    np.median(cnts),
-                    cnts.mean(),
-                    np.quantile(cnts, 0.9),
-                )
             # elif 'msls' in val_set_name:
             #     # split to ref and queries
             #     num_references = val_dataset.num_references

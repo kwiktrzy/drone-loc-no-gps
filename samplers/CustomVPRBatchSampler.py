@@ -32,7 +32,7 @@ class CustomVPRBatchSampler(Sampler):
         # sat_place_ids = places[places["friendly-name"].str.contains("satellite")]
 
         # uav_samples = uav_place_ids.sample(n=self.image_per_place // 2, replace=True)
-        # sat_samples = sat_place_ids.sample(n=self.image_per_place // 2, replace=True)
+        # sat_samples = sat_place_ids.sample(n=self.image_per_place // 2, replace=True) 
         # final_samples = pd.concat([uav_samples, sat_samples])
         batch_indices = []
         yield batch_indices
@@ -40,4 +40,4 @@ class CustomVPRBatchSampler(Sampler):
     def __len__(self):
         return len(self.places_ids)
 
-    zakazy = {4: [3, 5], 5: [4, 6], 3: [4], 6: [5]}
+    bans = {4: [3, 5], 5: [4, 6], 3: [4], 6: [5]}

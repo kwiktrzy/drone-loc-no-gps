@@ -1,7 +1,8 @@
+import math
 import os
 from collections import namedtuple
 from typing import List
-
+from pyproj import Transformer
 import pandas as pd
 
 import rasterio
@@ -32,8 +33,8 @@ class OverlapingTilesGenerator:
         self.is_rebuild_csv = is_rebuild_csv
         self.satellite_map_names: List[MapSatellite] = satellite_map_names
         self.csv_tiles_paths: List[str] = []
-        self.crop_range = 448  # Pixels to crop from tiff
-        self.overlap_stride_meters = 25
+        self.crop_range_meters = 300
+        self.overlap_stride_meters = 150
         self.converters = AbstractGenerator()
 
     def __get_map_coordinates_csv(self, csv_path, mapname):
@@ -47,22 +48,36 @@ class OverlapingTilesGenerator:
         return coordinates(lt_lat, lt_lon, rb_lat, rb_lon)
 
     def __save_patch(self, patch, patch_dir_ext):
+        
         success = False
+                            
+        src_h, src_w = patch.shape[:2]
+        scale = max(self.width_size / src_w, self.height_size / src_h)
+
+        new_w = math.ceil(src_w * scale)
+        new_h = math.ceil(src_h * scale)
+
+        interp = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
+        resized_full = cv2.resize(patch, (new_w, new_h), interpolation=interp)
+
+        y_start = max(0, (new_h - self.height_size) // 2)
+        x_start = max(0, (new_w - self.width_size) // 2)
+
+        resized_crop = resized_full[
+            y_start : y_start + self.height_size,
+            x_start : x_start + self.width_size
+        ]
+                    
         if self.patch_format_compress[0] == ".png":
             success = cv2.imwrite(
                 patch_dir_ext,
-                patch,
+                resized_crop,
                 [cv2.IMWRITE_PNG_COMPRESSION, self.patch_format_compress[1]],
             )
         elif self.patch_format_compress[0] == ".jpg":
-            resized_img = cv2.resize(
-                patch,
-                dsize=(self.width_size, self.height_size),
-                interpolation=cv2.INTER_LANCZOS4,
-            )
             success = cv2.imwrite(
                 patch_dir_ext,
-                resized_img,
+                resized_crop,
                 [cv2.IMWRITE_JPEG_QUALITY, self.patch_format_compress[1]],
             )
         else:
@@ -102,20 +117,33 @@ class OverlapingTilesGenerator:
         overlap_pixels_x,
         overlap_pixels_y,
     ):
-        step_x = self.crop_range - overlap_pixels_x
-        step_y = self.crop_range - overlap_pixels_y
+        
+        meters_per_pixel_x, meters_per_pixel_y = (
+            self.converters.calculate_pixel_resolution(src, map)
+        )
 
-        for y_off in range(0, src.height - self.crop_range + 1, step_y):
-            for x_off in range(0, src.width - self.crop_range + 1, step_x):
-                window = Window(x_off, y_off, self.crop_range, self.crop_range)
+        crop_width_px = int(self.crop_range_meters / meters_per_pixel_x)
+        crop_height_px = int(self.crop_range_meters / meters_per_pixel_y)
+        
+        step_x = crop_width_px - overlap_pixels_x
+        step_y = crop_height_px - overlap_pixels_y
+
+        for y_off in range(0, src.height - crop_height_px + 1, step_y):
+            for x_off in range(0, src.width - crop_width_px + 1, step_x):
+                
+                window = Window(x_off, y_off, crop_width_px, crop_height_px)
+                
                 patch_data = src.read(window=window, boundless=True)
                 patch_cv2 = np.moveaxis(patch_data, 0, -1)
+                
                 if patch_cv2.shape[-1] == 3:
                     patch_cv2 = cv2.cvtColor(patch_cv2, cv2.COLOR_RGB2BGR)
+                
                 yield (patch_cv2, window)
 
     def __crop_map(self, map: MapSatellite):
         with rasterio.open(map.map_tif_path) as src:
+            transformer_to_wgs84 = Transformer.from_crs(src.crs, "EPSG:4326", always_xy=True)
             width_image, height_image = src.width, src.height
             print("\n width:  ", width_image)
             print("\n height: ", height_image)
@@ -134,43 +162,52 @@ class OverlapingTilesGenerator:
             overlap_pixels_y = int(self.overlap_stride_meters / meters_per_pixel_y)
             for i, (patch, window) in enumerate(
                 self.__generate_patches(
-                    map=map,
-                    src=src,
-                    overlap_pixels_x=overlap_pixels_x,
-                    overlap_pixels_y=overlap_pixels_y,
-                )
+                map=map,
+                src=src,
+                overlap_pixels_x=overlap_pixels_x,
+                overlap_pixels_y=overlap_pixels_y,
+            )
             ):
-                utm_coords = self.get_patch_utm_coords(src, window)
+                patch_coords = self.get_patch_utm_coords(src, window)
+
+                lt_lon, lt_lat = transformer_to_wgs84.transform(patch_coords.lt_e, patch_coords.lt_n)
+                rb_lon, rb_lat = transformer_to_wgs84.transform(patch_coords.rb_e, patch_coords.rb_n)
+                center_lon, center_lat = transformer_to_wgs84.transform(patch_coords.center_e, patch_coords.center_n)
+
+                _, _, patch_zone_num, patch_zone_let = utm.from_latlon(center_lat, center_lon)
+                patch_zone_str = f"{patch_zone_num}{patch_zone_let}"
+
                 dir_output = f"{self.output_dir}/{map.region_name}"
                 os.makedirs(dir_output, exist_ok=True)
 
-                patch_filename = f"patch_{int(utm_coords.center_e)}_{int(utm_coords.center_n)}_{uuid.uuid4().hex[:8]}"
-                patch_dir_ext = (
-                    f"{dir_output}/{patch_filename}{self.patch_format_compress[0]}"
-                )
+                patch_name = (
+                    f"patch__{lt_lat:.6f}__{lt_lon:.6f}__{rb_lat:.6f}__{rb_lon:.6f}__{uuid.uuid4().hex[:8]}"
+                ).replace(".", "_")
+                
+                patch_dir_ext = f"{dir_output}/{patch_name}{self.patch_format_compress[0]}"
 
                 row = {
                     "img_path": patch_dir_ext,
-                    "center_e": utm_coords.center_e,
-                    "center_n": utm_coords.center_n,
-                    "lt_e": utm_coords.lt_e,
-                    "lt_n": utm_coords.lt_n,
-                    "rb_e": utm_coords.rb_e,
-                    "rb_n": utm_coords.rb_n,
-                    "zone_utm": zone_str,
+                    "LT_lat": lt_lat,
+                    "LT_lon": lt_lon,
+                    "RB_lat": rb_lat,
+                    "RB_lon": rb_lon,
+                    "lon": center_lon,
+                    "lat": center_lat,
                     "patch_width": self.width_size,
                     "patch_height": self.height_size,
                     "region_name": map.region_name,
                     "friendly-name": map.friendly_name,
                 }
+                
                 csv_rows.append(row)
 
                 if not self.__save_patch(patch, patch_dir_ext):
                     print(f"Skipping patch due to save error: {patch_dir_ext}")
 
-            self.converters.append_rows_csv(
-                csv_rows, map.tiles_satellite_csv_output_path, self.is_rebuild_csv
-            )
+        self.converters.append_rows_csv(
+            csv_rows, map.tiles_satellite_csv_output_path, self.is_rebuild_csv
+        )
 
     def generate_tiles(self):
         for map in self.satellite_map_names:

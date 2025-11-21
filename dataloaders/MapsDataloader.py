@@ -21,7 +21,7 @@ TRAIN_DATASET_NAMES = ["visloc-Taizhou-1-03"]
 class MapsDataModule(pl.LightningDataModule):
     def __init__(
         self,
-        is_overlaping_patches_approach=False,
+        # is_overlaping_patches_approach=False,
         tiles_csv_file_paths: List[str] = [],
         batch_size=32,
         num_workers=0,
@@ -32,7 +32,7 @@ class MapsDataModule(pl.LightningDataModule):
         image_size=(224, 224),
     ):
         super().__init__()
-        self.is_overlaping_patches_approach = is_overlaping_patches_approach
+        # self.is_overlaping_patches_approach = is_overlaping_patches_approach
         self.tiles_csv_file_paths: List[str] = tiles_csv_file_paths
         self.batch_size: int = batch_size
         self.num_workers = num_workers
@@ -128,14 +128,14 @@ class MapsDataModule(pl.LightningDataModule):
         )
 
     def train_dataloader(self):
-        if self.is_overlaping_patches_approach:
-            self.reload_dataset_overlapping()
-            return DataLoader(
-                self.train_dataset, batch_sampler=None, **self.train_loader_config
-            )
-        else:
-            self.reload()
-            return DataLoader(self.train_dataset, **self.train_loader_config)
+        # if self.is_overlaping_patches_approach:
+        #     self.reload_dataset_overlapping()
+        #     return DataLoader(
+        #         self.train_dataset, batch_sampler=None, **self.train_loader_config
+        #     )
+        # else:
+        self.reload()
+        return DataLoader(self.train_dataset, **self.train_loader_config)
 
     def val_dataloader(self):
         val_dataloaders = []
