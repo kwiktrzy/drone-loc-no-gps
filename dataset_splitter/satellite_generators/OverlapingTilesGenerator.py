@@ -23,6 +23,8 @@ class OverlapingTilesGenerator:
         width_size: int = 224,
         height_size: int = 224,
         patch_format_compress=(".jpg", 100),
+        crop_range_meters=300,
+        overlap_stride_meters=150,
         is_rebuild_csv=False,
         satellite_map_names: List[MapSatellite] = [],
     ):
@@ -33,8 +35,8 @@ class OverlapingTilesGenerator:
         self.is_rebuild_csv = is_rebuild_csv
         self.satellite_map_names: List[MapSatellite] = satellite_map_names
         self.csv_tiles_paths: List[str] = []
-        self.crop_range_meters = 300
-        self.overlap_stride_meters = 150
+        self.crop_range_meters = crop_range_meters
+        self.overlap_stride_meters = overlap_stride_meters
         self.converters = AbstractGenerator()
 
     def __get_map_coordinates_csv(self, csv_path, mapname):

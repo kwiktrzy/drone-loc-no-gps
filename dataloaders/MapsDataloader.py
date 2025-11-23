@@ -106,6 +106,12 @@ class MapsDataModule(pl.LightningDataModule):
                             valid_set_name, input_transform=self.valid_transform
                         )
                     )
+                elif "Changjiang-23" in valid_set_name:
+                    self.val_datasets.append(
+                        dataloaders.VisLocSatelliteUavSeparatedDataset.get_separated_test_set(
+                            valid_set_name, input_transform=self.valid_transform
+                        )
+                    )
 
     def reload(self):
         self.train_dataset = VisLocDataset(

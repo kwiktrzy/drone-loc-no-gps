@@ -105,6 +105,8 @@ def main():
             "region_name": "Taizhou-1",
             "uav_visloc_id": "03",
             "map_filename": "satellite03.tif",
+            "crop_range_meters": 295,
+            "overlap_stride_meters": 195,  
             "output_suffix": "one_to_one"
         },
         {
@@ -112,6 +114,8 @@ def main():
             "region_name": "Yunnan",
             "uav_visloc_id": "05",
             "map_filename": "satellite05.tif",
+            "crop_range_meters": 365,
+            "overlap_stride_meters": 265,
              "output_suffix": "one_to_one"
         },
         {
@@ -119,20 +123,37 @@ def main():
             "region_name": "Changjiang-20",
             "uav_visloc_id": "01",
             "map_filename": "satellite01.tif",
+            "crop_range_meters": 310,
+            "overlap_stride_meters": 200,
             "output_suffix": "one_to_one"
         },
         {
-            "set_type": "train",
+            "set_type": "val",
             "region_name": "Changjiang-23",
             "uav_visloc_id": "02",
             "map_filename": "satellite02.tif",
-            "output_suffix": "one_to_one"
+            "crop_range_meters": 310,
+            "overlap_stride_meters": 200,
+            "val_variant": "v1",
+            "output_suffix": "v1_one_to_one"            
+        },
+        {
+            "set_type": "val",
+            "region_name": "Changjiang-23",
+            "uav_visloc_id": "02",
+            "map_filename": "satellite02.tif",
+            "crop_range_meters": 310,
+            "overlap_stride_meters": 210,
+            "val_variant": "v2",
+            "output_suffix": "v2_one_to_one"            
         },
         {
             "set_type": "train",
             "region_name": "Taizhou-6",
             "uav_visloc_id": "04",
             "map_filename": "satellite04.tif",
+            "crop_range_meters": 315,
+            "overlap_stride_meters": 215,
             "output_suffix": "one_to_one"
         },
         {
@@ -140,20 +161,24 @@ def main():
             "region_name": "Zhuxi",
             "uav_visloc_id": "06",
             "map_filename": "satellite06.tif",
+            "crop_range_meters": 325,
+            "overlap_stride_meters": 225,
             "output_suffix": "one_to_one"
         },
-        {
-            "set_type": "train",
-            "region_name": "Donghuayuan",
-            "uav_visloc_id": "07",
-            "map_filename": "satellite07.tif",
-            "output_suffix": "one_to_one"            
-        },
+        # # {
+        # #     "set_type": "train",
+        # #     "region_name": "Donghuayuan",
+        # #     "uav_visloc_id": "07",
+        # #     "map_filename": "satellite07.tif",
+        # #     "output_suffix": "one_to_one"            
+        # # },
         {
             "set_type": "train",
             "region_name": "Huzhou-3",
             "uav_visloc_id": "08",
             "map_filename": "satellite08.tif",
+            "crop_range_meters": 320,
+            "overlap_stride_meters": 220,
             "output_suffix": "one_to_one"            
         },
         # {
@@ -167,6 +192,8 @@ def main():
             "region_name": "Huailai",
             "uav_visloc_id": "10",
             "map_filename": "satellite10.tif",
+            "crop_range_meters": 315,
+            "overlap_stride_meters": 215,
             "output_suffix": "one_to_one"            
         },
         {
@@ -174,6 +201,8 @@ def main():
             "region_name": "Shandan",
             "uav_visloc_id": "11",
             "map_filename": "satellite11.tif",
+            "crop_range_meters": 370,
+            "overlap_stride_meters": 270,
             "val_variant": "v1",
             "output_suffix": "v1_one_to_one"            
         },
@@ -182,6 +211,8 @@ def main():
             "region_name": "Shandan",
             "uav_visloc_id": "11",
             "map_filename": "satellite11.tif",
+            "crop_range_meters": 370,
+            "overlap_stride_meters": 270,
             "val_variant": "v2",
             "output_suffix": "v2_one_to_one"            
         },
@@ -212,7 +243,7 @@ def main():
                 
                 map_sat = MapSatellite(
                     csv_path=str(
-                        config.UAV_VISLOC_ROOT / "satellite_coordinates_range.csv"
+                        config.UAV_VISLOC_ROOT / "satellite_ coordinates_range.csv"
                     ),
                     tiles_satellite_csv_output_path=str(output_csv_path),
                     map_tif_path=str(map_tif_path),
@@ -223,6 +254,8 @@ def main():
                 thumb_gen = OverlapingTilesGenerator(
                     output_dir=str(config.THUMBNAILS_ONE_TO_ONE_OUTPUT_DIR),
                     satellite_map_names=[map_sat],
+                    crop_range_meters=d_conf['crop_range_meters'],
+                    overlap_stride_meters=d_conf['overlap_stride_meters'],
                     is_rebuild_csv=config.force_regenerate_tiles,  # Rebuild for each new region processing
                 )
                 thumb_gen.generate_tiles()
@@ -260,7 +293,7 @@ def main():
                 force_regenerate=config.force_regenerate_place_ids,
                 is_validation_set=is_val,
                 is_validation_set_v2=d_conf.get("val_variant") == "v2",
-                radius_neighbors_meters=150,
+                radius_neighbors_meters=70,
         )
         
         generator.generate_place_ids()
@@ -339,7 +372,25 @@ def main():
         save_last=False,
         mode="max",
     )
-    
+    checkpoint_cb_ch23 = pl.callbacks.ModelCheckpoint(
+        monitor="Changjiang-23-v1_one_to_one/R1",
+        filename=f"{model.encoder_arch}" + "_v1_({epoch:02d})_R1[{Changjiang-23-v1_one_to_one/R1:.4f}]",
+        auto_insert_metric_name=False,
+        save_weights_only=True,
+        save_top_k=3,
+        save_last=False,
+        mode="max",
+    )
+    checkpoint_cb_v2_ch23 = pl.callbacks.ModelCheckpoint(
+        monitor="Changjiang-23-v2_one_to_one/R1",
+        filename=f"{model.encoder_arch}" + "_v2_({epoch:02d})_R1[{Changjiang-23-v2_one_to_one/R1:.4f}]",
+        auto_insert_metric_name=False,
+        save_weights_only=True,
+        save_top_k=3,
+        save_last=False,
+        mode="max",
+    )
+
     trainer = pl.Trainer(
         accelerator="gpu",
         devices=1,
@@ -351,7 +402,9 @@ def main():
         check_val_every_n_epoch=1,  # run validation every epoch
         callbacks=[
             checkpoint_cb,
-            checkpoint_cb_v2
+            checkpoint_cb_v2,
+            checkpoint_cb_ch23,
+            checkpoint_cb_v2_ch23
         ],  # we only run the checkpointing callback (you can add more)
         reload_dataloaders_every_n_epochs=1,  # we reload the dataset to shuffle the order
         log_every_n_steps=20,

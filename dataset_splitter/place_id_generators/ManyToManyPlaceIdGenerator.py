@@ -103,7 +103,7 @@ class ManyToManyPlaceIdGenerator:
 
         sat_records = df[df["friendly-name"].str.contains("satellite", case=False, na=False)]
         
-        if self.is_non_overlaping_uavs:
+        if self.is_non_overlaping_uavs and not self.is_validation_set:
             uav_records = self.get_non_overlapping_uavs(df, self.radius_neighbors_meters)
         else:
             uav_records = df[df["friendly-name"].str.contains("uav", case=False, na=False)]
@@ -155,28 +155,6 @@ class ManyToManyPlaceIdGenerator:
             else:
                 pass 
 
-            if should_add_query:
-                query_row = {
-                    "img_path": reference_point["img_path"],
-                    "place_id": index,
-                    "distance_between_tiles_meters": 0.0,
-                    "e_utm": reference_point["e_utm"],
-                    "n_utm": reference_point["n_utm"],
-                    "zone_utm": reference_point["zone_utm"],
-                    "friendly-name": reference_point["friendly-name"],
-                    "region_name": reference_point["region_name"],
-                    "source_tile_id": reference_point["index"],
-                    "reference_tile_id": reference_point["index"],
-                    "reference_lon": reference_point["lon"],
-                    "reference_lat": reference_point["lat"],
-                    "lon": reference_point["lon"],
-                    "lat": reference_point["lat"],
-                    "width": reference_point["patch_width"],
-                    "height": reference_point["patch_height"],
-                    "source_file_path": self.csv_tiles_path,
-                }
-                csv_rows.append(query_row)
-
             neighbors_added = 0
             for dist, indic in zip(distances, indices):
                 neighbour = database_records.iloc[indic]
@@ -188,6 +166,10 @@ class ManyToManyPlaceIdGenerator:
                     break
                 
                 if self.top_n_neighbors is not None and dist > self.radius_neighbors_meters:
+                    if not self.is_validation_set:
+                        print(f"\nERROR: WE DO NOT FIND VALID NEIGHBOUR FOR TRAIN")
+                        print(f"\n -> Nearest neighbour is {dist} m away")
+                        continue
                     continue
                 
                 if self.is_validation_set_v2:
@@ -213,6 +195,28 @@ class ManyToManyPlaceIdGenerator:
                 }
                 csv_rows.append(row)
                 neighbors_added += 1
+            
+            if should_add_query and (neighbors_added > 0 or self.is_validation_set):
+                query_row = {
+                    "img_path": reference_point["img_path"],
+                    "place_id": index,
+                    "distance_between_tiles_meters": 0.0,
+                    "e_utm": reference_point["e_utm"],
+                    "n_utm": reference_point["n_utm"],
+                    "zone_utm": reference_point["zone_utm"],
+                    "friendly-name": reference_point["friendly-name"],
+                    "region_name": reference_point["region_name"],
+                    "source_tile_id": reference_point["index"],
+                    "reference_tile_id": reference_point["index"],
+                    "reference_lon": reference_point["lon"],
+                    "reference_lat": reference_point["lat"],
+                    "lon": reference_point["lon"],
+                    "lat": reference_point["lat"],
+                    "width": reference_point["patch_width"],
+                    "height": reference_point["patch_height"],
+                    "source_file_path": self.csv_tiles_path,
+                }
+                csv_rows.append(query_row)
         latest_max_id = csv_rows[-1]["place_id"] + 1
         if self.is_validation_set_v2:
             for idx, iter_row in database_records.iterrows():
