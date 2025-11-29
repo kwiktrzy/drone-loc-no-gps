@@ -5,6 +5,7 @@ from pathlib import Path
 
 from models import abstract, utils
 import numpy as np
+from datetime import datetime
 
 
 class VPRModel(pl.LightningModule):
@@ -245,13 +246,17 @@ class VPRModel(pl.LightningModule):
             if "Shandan" in short_val_name:
                 num_references = len(val_dataset.db_image_paths)
                 positives = val_dataset.get_positives()
-                
-                variant = "v1" if "v1" in short_val_name else ("v2" if "v2" in short_val_name else "base")
-                
+
+                variant = (
+                    "v1"
+                    if "v1" in short_val_name
+                    else ("v2" if "v2" in short_val_name else "base")
+                )
+
                 print(f"\n Shandan ({variant}): {short_val_name}")
                 print(f" Queries: {len(positives)}")
                 print(f" References: {num_references}")
-                
+
                 cnts = np.array([len(p) for p in positives])
                 zero_pos = (cnts == 0).sum()
                 print(f" Q with 0 positives: {zero_pos} / {len(cnts)}")
@@ -263,13 +268,17 @@ class VPRModel(pl.LightningModule):
             elif "Changjiang-23" in short_val_name:
                 num_references = len(val_dataset.db_image_paths)
                 positives = val_dataset.get_positives()
-                
-                variant = "v1" if "v1" in short_val_name else ("v2" if "v2" in short_val_name else "base")
-                
+
+                variant = (
+                    "v1"
+                    if "v1" in short_val_name
+                    else ("v2" if "v2" in short_val_name else "base")
+                )
+
                 print(f"\n Changjiang-23 ({variant}): {short_val_name}")
                 print(f" Queries: {len(positives)}")
                 print(f" References: {num_references}")
-                
+
                 cnts = np.array([len(p) for p in positives])
                 zero_pos = (cnts == 0).sum()
                 print(f" Q with 0 positives: {zero_pos} / {len(cnts)}")
@@ -302,6 +311,24 @@ class VPRModel(pl.LightningModule):
                 dataset_name=short_val_name,
                 faiss_gpu=self.faiss_gpu,
             )
+            predictions = utils.get_validation_recalls(
+                r_list=r_list,
+                q_list=q_list,
+                k_values=[1, 5, 10, 15, 20, 50, 100],
+                gt=positives,
+                print_results=False,
+                dataset_name=short_val_name,
+                faiss_gpu=self.faiss_gpu,
+                testing=True,
+            )
+            self.val_debug_results(
+                current_val_dataset=val_dataset,
+                q_list=q_list,
+                predictions=predictions,
+                positives=positives,
+                num_references=num_references,
+                short_val_name=short_val_name,
+            )
             del r_list, q_list, feats, num_references, positives
 
             metric_name_r1 = f"{short_val_name}/R1"
@@ -319,3 +346,37 @@ class VPRModel(pl.LightningModule):
 
         # reset the outputs list
         self.val_outputs = []
+
+    def val_debug_results(
+        self,
+        current_val_dataset,
+        q_list,
+        predictions,
+        positives,
+        num_references,
+        short_val_name,
+    ):
+        timestamp_str = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+        debug_file_path = f"debug_results_{short_val_name}_{timestamp_str}.txt"
+        with open(debug_file_path) as f:
+            f.write(f"Results for {short_val_name} \n")
+            f.write("=" * 50 + "\n")
+            for q_idx in range(len(q_list)):
+                real_q_idx_in_dataset = (
+                    num_references + q_idx
+                )  # cuz queries are after db embeddings
+                q_path = current_val_dataset.images[real_q_idx_in_dataset]
+                top_k_indices = predictions[q_idx][:5]
+                f.write(f"\nQUERY: {q_path}\n")
+                f.write(f"Ground Truth Indices (z get_positives): {positives[q_idx]}\n")
+
+                f.write("Predictions (Top 5):\n")
+                for rank, db_idx in enumerate(top_k_indices):
+                    pred_path = current_val_dataset.images[db_idx]
+
+                    is_correct = db_idx in positives[q_idx]
+                    marker = "[HIT]  " if is_correct else "[MISS] "
+
+                    f.write(
+                        f"  {rank+1}. {marker} Index: {db_idx} | Path: {pred_path}\n"
+                    )

@@ -68,6 +68,7 @@ class SatelliteUavDataset(Dataset):
             .reset_index(drop=True)
         )
         num_q_sample = int(len(q_uav_all) * self.q_ratio)
+
         q_uav = q_uav_all.sample(
             n=num_q_sample, random_state=self.random_seed
         ).reset_index(drop=True)
@@ -77,7 +78,7 @@ class SatelliteUavDataset(Dataset):
         self.q_image_paths = q_uav["img_path"].tolist()
 
         self.db_utm_np = np.array(db_satellite[["e_utm", "n_utm"]].values)
-        self.q_utm_np = np.array(db_satellite[["e_utm", "n_utm"]].values)
+        self.q_utm_np = np.array(q_uav[["e_utm", "n_utm"]].values)
 
     def get_positives(self):
         # positives for evaluation are those within trivial threshold range
