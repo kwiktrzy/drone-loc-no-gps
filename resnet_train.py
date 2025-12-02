@@ -342,9 +342,9 @@ def main():
         # ----- Loss functions
         # example: ContrastiveLoss, TripletMarginLoss, MultiSimilarityLoss,
         # FastAPLoss, CircleLoss, SupConLoss,
-        loss_name="MultiSimilarityLoss",
-        miner_name="MultiSimilarityMiner",  # example: TripletMarginMiner, MultiSimilarityMiner, PairMarginMiner
-        miner_margin=0.1,
+        loss_name="TripletMarginLoss",
+        miner_name="TripletMarginMiner",  # example: TripletMarginMiner, MultiSimilarityMiner, PairMarginMiner
+        miner_margin=0.2,
         faiss_gpu=False,
     )
 

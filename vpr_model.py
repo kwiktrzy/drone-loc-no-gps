@@ -357,9 +357,11 @@ class VPRModel(pl.LightningModule):
         short_val_name,
     ):
         timestamp_str = datetime.now().strftime("%Y-%m-%d_%H%M%S")
-        debug_file_path = f"debug_results_{short_val_name}_{timestamp_str}.txt"
-        with open(debug_file_path) as f:
+        debug_file_path = f"debug_results_{short_val_name}.txt"
+        with open(debug_file_path, "a") as f:
+            timestamp_str = datetime.now().strftime("%Y-%m-%d_%H%M%S")
             f.write(f"Results for {short_val_name} \n")
+            f.write(f"\n Date: {timestamp_str}")
             f.write("=" * 50 + "\n")
             for q_idx in range(len(q_list)):
                 real_q_idx_in_dataset = (

@@ -207,6 +207,8 @@ class OverlapingTilesGenerator:
                 if not self.__save_patch(patch, patch_dir_ext):
                     print(f"Skipping patch due to save error: {patch_dir_ext}")
 
+                print(f"\rGenerated:{i}", end="", flush=True)
+
         self.converters.append_rows_csv(
             csv_rows, map.tiles_satellite_csv_output_path, self.is_rebuild_csv
         )
