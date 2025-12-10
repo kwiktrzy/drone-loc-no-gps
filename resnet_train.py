@@ -293,7 +293,8 @@ def main():
                 force_regenerate=config.force_regenerate_place_ids,
                 is_validation_set=is_val,
                 is_validation_set_v2=d_conf.get("val_variant") == "v2",
-                radius_neighbors_meters=70,
+                # radius_neighbors_meters=70,
+                radius_neighbors_meters=70 if is_val else d_conf['crop_range_meters'],
         )
         
         generator.generate_place_ids()
