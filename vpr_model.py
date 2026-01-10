@@ -1,6 +1,9 @@
+import os
 import pytorch_lightning as pl
 import torch
+import pandas as pd
 from torch.optim import lr_scheduler
+import torch.nn.functional as F
 from pathlib import Path
 
 from models import abstract, utils
@@ -81,6 +84,7 @@ class VPRModel(pl.LightningModule):
 
         # For validation in Lightning v2.0.0
         self.val_outputs = []
+        self.is_loss_debug = True
 
     # the forward pass of the lightning model
     def forward(self, x):
@@ -169,6 +173,8 @@ class VPRModel(pl.LightningModule):
             prog_bar=True,
             logger=True,
         )
+        if self.is_loss_debug:
+            return loss, miner_outputs
         return loss
 
     # This is the training step that's executed at each iteration
@@ -191,9 +197,73 @@ class VPRModel(pl.LightningModule):
         if torch.isnan(descriptors).any():
             raise ValueError("NaNs in descriptors")
 
-        loss = self.loss_function(
-            descriptors, labels
-        )  # Call the loss_function we defined above
+        loss, miner_outputs = self.loss_function(descriptors, labels)
+
+        if self.is_loss_debug:
+            if (
+                self.current_epoch > 30
+                and loss.item() > 0.04
+                and miner_outputs is not None
+            ):
+
+                debug_file_path = "debug_hard_mining.csv"
+
+                with torch.no_grad():
+                    probs = F.softmax(descriptors, dim=1)
+                    entropy = -torch.sum(probs * torch.log(probs + 1e-9), dim=1)
+
+                    norms = torch.norm(descriptors, p=2, dim=1)
+                    stds = torch.std(descriptors, dim=1)
+
+                    desc_norm = F.normalize(descriptors, p=2, dim=1)
+                    pairs_to_log = []
+
+                    if len(miner_outputs) == 3:
+                        anchors, positives, negatives = miner_outputs
+                        for i in range(len(anchors)):
+                            pairs_to_log.append((anchors[i], positives[i], "HARD_POS"))
+                            pairs_to_log.append((anchors[i], negatives[i], "HARD_NEG"))
+
+                    elif len(miner_outputs) == 4:
+                        a_pos, p, a_neg, n = miner_outputs
+                        for i in range(len(a_pos)):
+                            pairs_to_log.append((a_pos[i], p[i], "HARD_POS"))
+                        for i in range(len(a_neg)):
+                            pairs_to_log.append((a_neg[i], n[i], "HARD_NEG"))
+
+                    csv_data = []
+                    for idx_a_t, idx_b_t, pair_type in pairs_to_log:
+                        idx_a = idx_a_t.item()
+                        idx_b = idx_b_t.item()
+
+                        sim = torch.dot(desc_norm[idx_a], desc_norm[idx_b]).item()
+
+                        csv_data.append(
+                            {
+                                "epoch": self.current_epoch,
+                                "batch_idx": batch_idx,
+                                "loss": round(loss.item(), 5),
+                                "pair_type": pair_type,
+                                "similarity": round(sim, 4),
+                                "imgA_idx": idx_a,
+                                "imgA_label": labels[idx_a].item(),
+                                "imgA_entropy": round(entropy[idx_a].item(), 4),
+                                "imgA_norm": round(norms[idx_a].item(), 4),
+                                "imgA_std": round(stds[idx_a].item(), 4),
+                                "imgB_idx": idx_b,
+                                "imgB_label": labels[idx_b].item(),
+                                "imgB_entropy": round(entropy[idx_b].item(), 4),
+                                "imgB_norm": round(norms[idx_b].item(), 4),
+                            }
+                        )
+                    if csv_data:
+                        df = pd.DataFrame(csv_data)
+                        df.to_csv(
+                            debug_file_path,
+                            mode="a",
+                            header=not os.path.exists(debug_file_path),
+                            index=False,
+                        )
 
         self.log("loss", loss.item(), logger=True, prog_bar=True)
         return {"loss": loss}
