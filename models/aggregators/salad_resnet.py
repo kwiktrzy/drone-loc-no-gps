@@ -52,7 +52,7 @@ def get_matching_probs(S, dustbin_score=1.0, num_iters=3, reg=1.0):
     return log_P - norm
 
 
-class SALAD(nn.Module):
+class SALAD_Resnet(nn.Module):
     """
     This class represents the Sinkhorn Algorithm for Locally Aggregated Descriptors (SALAD) model.
 
@@ -107,17 +107,16 @@ class SALAD(nn.Module):
 
     def forward(self, x):
         """
-        x (tuple): A tuple containing two elements, f and t.
-            (torch.Tensor): The feature tensors (t_i) [B, C, H // 14, W // 14].
-            (torch.Tensor): The token tensor (t_{n+1}) [B, C].
+        x (tuple): A tuple containing features from resnet
 
         Returns:
             f (torch.Tensor): The global descriptor [B, m*l + g]
         """
-        x, t = x  # Extract features and token
 
         f = self.cluster_features(x).flatten(2)
         p = self.score(x).flatten(2)
+
+        t = x.mean(dim=[-2, -1])
         t = self.token_features(t)
 
         # Sinkhorn algorithm
@@ -141,4 +140,4 @@ class SALAD(nn.Module):
             dim=-1,
         )
 
-        return nn.functional.normalize(f, p=2, dim=-1)
+        return nn.functional.normalize(f, p=2, dim=-1), attn_map

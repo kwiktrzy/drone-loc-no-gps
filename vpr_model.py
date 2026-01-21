@@ -85,11 +85,14 @@ class VPRModel(pl.LightningModule):
         # For validation in Lightning v2.0.0
         self.val_outputs = []
         self.is_loss_debug = True
+        self.is_return_attention = True
 
     # the forward pass of the lightning model
     def forward(self, x):
         x = self.backbone(x)
-        x = self.aggregator(x)
+        x, attn_map = self.aggregator(x)
+        if self.is_return_attention:
+            return x, attn_map
         return x
 
     # configure the optimizer
