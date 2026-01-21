@@ -10,6 +10,8 @@ from models import abstract, utils
 import numpy as np
 from datetime import datetime
 
+from models.utils.batch_attention import visualize_batch_attention
+
 
 class VPRModel(pl.LightningModule):
     """This is the main model for Visual Place Recognition
@@ -84,6 +86,8 @@ class VPRModel(pl.LightningModule):
 
         # For validation in Lightning v2.0.0
         self.val_outputs = []
+        # ----------------------------------
+
         self.is_loss_debug = True
         self.is_return_attention = True
 
@@ -193,9 +197,12 @@ class VPRModel(pl.LightningModule):
         labels = labels.view(-1)
 
         # Feed forward the batch to the model
-        descriptors = self(
-            images
-        )  # Here we are calling the method forward that we defined above
+        if self.is_return_attention:
+            descriptors, attn_maps = self(images)
+        else:
+            descriptors = self(
+                images
+            )  # Here we are calling the method forward that we defined above
 
         if torch.isnan(descriptors).any():
             raise ValueError("NaNs in descriptors")
@@ -209,7 +216,10 @@ class VPRModel(pl.LightningModule):
                 and miner_outputs is not None
             ):
 
-                debug_file_path = "debug_hard_mining.csv"
+                debug_root_dir = "debug_vis"
+                os.makedirs(debug_root_dir, exist_ok=True)
+
+                debug_file_path = os.path.join(debug_root_dir, "debug_hard_mining.csv")
 
                 with torch.no_grad():
                     probs = F.softmax(descriptors, dim=1)
@@ -266,6 +276,21 @@ class VPRModel(pl.LightningModule):
                             mode="a",
                             header=not os.path.exists(debug_file_path),
                             index=False,
+                        )
+
+                    if self.is_return_attention and attn_maps is not None:
+                        visualize_batch_attention(
+                            images_tensor=images,
+                            attn_maps=attn_maps,
+                            labels=labels,
+                            batch_idx=batch_idx,
+                            epoch=self.current_epoch,
+                            output_dir="debug_vis",
+                            limit=None,
+                        )
+                    else:
+                        print(
+                            "Warning: Loss spiked but attention maps strictly not returned by model."
                         )
 
         self.log("loss", loss.item(), logger=True, prog_bar=True)
