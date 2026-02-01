@@ -3,9 +3,12 @@ import pandas as pd
 import numpy as np
 import os
 from dataset_splitter.AbstractGenerator import UTMPatchCoordinates, AbstractGenerator
+from dataset_splitter.structs.InformativenessFilter import InformativenessFilter
 from sklearn.neighbors import NearestNeighbors
 from collections import defaultdict
-#is_validation_set_v2 means we doing query like for train set but also added dont used sat images into Dataframe csv
+
+# is_validation_set_v2 means we doing query like for train set but also added dont used sat images into Dataframe csv
+
 
 class ManyToManyPlaceIdGenerator:
     def __init__(
@@ -17,8 +20,8 @@ class ManyToManyPlaceIdGenerator:
         is_validation_set=False,
         is_validation_set_v2=False,
         force_regenerate=False,
-        include_uav_in_output=True, 
-        is_non_overlaping_uavs=True
+        include_uav_in_output=True,
+        is_non_overlaping_uavs=True,  # False
     ):
         self.radius_neighbors_meters = radius_neighbors_meters
         self.top_n_neighbors = top_n_neighbors
@@ -31,15 +34,15 @@ class ManyToManyPlaceIdGenerator:
         self.is_non_overlaping_uavs = is_non_overlaping_uavs
         self.used_sat_imgs = defaultdict(int)
         self.converters = AbstractGenerator()
+        self.informativeness_calculation = InformativenessFilter()
 
     def __utm_to_columns(self, row):
         utm_cords = self.converters.gps_to_utm(row.lat, row.lon)
         return {"e_utm": utm_cords.e, "n_utm": utm_cords.n, "zone_utm": utm_cords.zone}
-    
-    def get_non_overlapping_uavs(self, df_tiles, radius_meters: float) -> pd.DataFrame:
-        uav_records = df_tiles[
-            df_tiles["friendly-name"].str.contains("uav", case=False, na=False)
-        ].copy()
+
+    def get_non_overlapping_uavs(
+        self, df_tiles, uav_records, radius_meters: float
+    ) -> pd.DataFrame:
 
         if uav_records.empty:
             print(f"Error: do not find any rows UAV.")
@@ -58,9 +61,12 @@ class ManyToManyPlaceIdGenerator:
         distances_r, indices_r = nn_r.radius_neighbors(uav_coords)
 
         indices_to_skip = set()
-        iloc_indices_to_keep = [] 
-
+        iloc_indices_to_keep = []
         for i in range(len(uav_records)):
+            if not self.informativeness_calculation.analyze(
+                uav_records.iloc[i]["img_path"]
+            ):
+                continue
             if i in indices_to_skip:
                 continue
             iloc_indices_to_keep.append(i)
@@ -70,7 +76,12 @@ class ManyToManyPlaceIdGenerator:
         final_filtered_records = df_tiles.loc[original_indices_to_keep].copy()
 
         return final_filtered_records
-    
+
+    def _fit_informativeness_filter(self, paths):
+        n = min(100, len(paths))
+        sampled_paths = paths.sample(n=n)
+        self.informativeness_calculation.fit(sampled_paths)
+
     def generate_place_ids(self):
 
         if os.path.exists(self.csv_place_ids_output_path):
@@ -81,19 +92,21 @@ class ManyToManyPlaceIdGenerator:
                 )
                 return
 
-        print(f" Generating Many to Many Place ID for {self.csv_place_ids_output_path}...")
+        print(
+            f" Generating Many to Many Place ID for {self.csv_place_ids_output_path}..."
+        )
         df = pd.read_csv(self.csv_tiles_path)
 
         df = df.loc[:, ~df.columns.duplicated()]
-        if 'index' in df.columns:
-            if 'Unnamed: 0' in df.columns:
-                df = df.drop(columns=['Unnamed: 0'])
-        elif 'Unnamed: 0' in df.columns:
-            df = df.rename(columns={'Unnamed: 0': 'index'})
+        if "index" in df.columns:
+            if "Unnamed: 0" in df.columns:
+                df = df.drop(columns=["Unnamed: 0"])
+        elif "Unnamed: 0" in df.columns:
+            df = df.rename(columns={"Unnamed: 0": "index"})
         else:
-            df.index.name = 'index'
+            df.index.name = "index"
             df = df.reset_index()
-        
+
         if not {"e_utm", "n_utm", "zone_utm"}.issubset(df.columns):
             df = df.join(df.apply(self.__utm_to_columns, axis=1).apply(pd.Series))
 
@@ -101,12 +114,30 @@ class ManyToManyPlaceIdGenerator:
         if not has_same_zone:
             print(" \n Warning: region contains different zones!")
 
-        sat_records = df[df["friendly-name"].str.contains("satellite", case=False, na=False)]
-        
+        sat_records = df[
+            df["friendly-name"].str.contains("satellite", case=False, na=False)
+        ]
+
+        uav_records = df[
+            df["friendly-name"].str.contains("uav", case=False, na=False)
+        ].copy()
+
+        self._fit_informativeness_filter(uav_records["img_path"])
+
         if self.is_non_overlaping_uavs and not self.is_validation_set:
-            uav_records = self.get_non_overlapping_uavs(df, self.radius_neighbors_meters)
+            uav_records = self.get_non_overlapping_uavs(
+                df, uav_records, self.radius_neighbors_meters
+            )
         else:
-            uav_records = df[df["friendly-name"].str.contains("uav", case=False, na=False)]
+            indices_to_drop = [
+                index
+                for index, row in uav_records.iterrows()
+                if not self.informativeness_calculation.analyze(row["img_path"])
+            ]
+            uav_records = uav_records.drop(indices_to_drop)
+        #     uav_records = df[
+        #         df["friendly-name"].str.contains("uav", case=False, na=False)
+        #     ]
 
         if self.is_validation_set and not self.is_validation_set_v2:
             print(" -> MODE: Validation (query: SAT, Neighbor: UAV)")
@@ -127,51 +158,55 @@ class ManyToManyPlaceIdGenerator:
         if self.top_n_neighbors is not None:
             print(f" Using top {self.top_n_neighbors} nearest neighbors")
             nn_model = NearestNeighbors(
-                n_neighbors=min(self.top_n_neighbors + 1, len(database_coords)),  
-                algorithm="kd_tree"
+                n_neighbors=min(self.top_n_neighbors + 1, len(database_coords)),
+                algorithm="kd_tree",
             )
             nn_model = nn_model.fit(database_coords)
             distances_r, indices_r = nn_model.kneighbors(query_coords)
         else:
             print(f" Using radius-based neighbors ({self.radius_neighbors_meters}m)")
             nn_model = NearestNeighbors(
-                radius=self.radius_neighbors_meters,
-                algorithm="kd_tree"
+                radius=self.radius_neighbors_meters, algorithm="kd_tree"
             )
             nn_model = nn_model.fit(database_coords)
             distances_r, indices_r = nn_model.radius_neighbors(query_coords)
 
         csv_rows = []
-        
 
         for index, (distances, indices) in enumerate(zip(distances_r, indices_r)):
             reference_point = query_records.iloc[index]
-            
+
             should_add_query = True
-            
+
             if not self.is_validation_set:
                 if not self.include_uav_in_output:
                     should_add_query = False
             else:
-                pass 
+                pass
 
             neighbors_added = 0
             for dist, indic in zip(distances, indices):
                 neighbour = database_records.iloc[indic]
-                
+
                 if neighbour["index"] == reference_point["index"]:
                     continue
-                
-                if self.top_n_neighbors is not None and neighbors_added >= self.top_n_neighbors:
+
+                if (
+                    self.top_n_neighbors is not None
+                    and neighbors_added >= self.top_n_neighbors
+                ):
                     break
-                
-                if self.top_n_neighbors is not None and dist > self.radius_neighbors_meters:
+
+                if (
+                    self.top_n_neighbors is not None
+                    and dist > self.radius_neighbors_meters
+                ):
                     if not self.is_validation_set:
                         print(f"\nERROR: WE DO NOT FIND VALID NEIGHBOUR FOR TRAIN")
                         print(f"\n -> Nearest neighbour is {dist} m away")
                         continue
                     continue
-                
+
                 if self.is_validation_set_v2:
                     self.used_sat_imgs[neighbour["index"]] += 1
                 row = {
@@ -195,7 +230,7 @@ class ManyToManyPlaceIdGenerator:
                 }
                 csv_rows.append(row)
                 neighbors_added += 1
-            
+
             if should_add_query and (neighbors_added > 0 or self.is_validation_set):
                 query_row = {
                     "img_path": reference_point["img_path"],
@@ -241,8 +276,8 @@ class ManyToManyPlaceIdGenerator:
                         "source_file_path": self.csv_tiles_path,
                     }
                     csv_rows.append(row)
-                    latest_max_id +=1
-                    
+                    latest_max_id += 1
+
         self.converters.append_rows_csv(
             csv_rows, self.csv_place_ids_output_path, self.force_regenerate
         )
@@ -253,9 +288,11 @@ class ManyToManyPlaceIdGenerator:
         print(
             f'\n Mean distance between neighbours: {df_output["distance_between_tiles_meters"].mean()} m'
         )
-        print(f"\fRows: {len(df_output)}")
-        
-        place_id_counts = df_output.groupby('place_id').size()
+        print(f"\n Rows: {len(df_output)}")
+
+        place_id_counts = df_output.groupby("place_id").size()
         print(f"\n Number of unique place_ids: {len(place_id_counts)}")
         print(f" Mean images per place_id: {place_id_counts.mean():.2f}")
-        print(f" Min/Max images per place_id: {place_id_counts.min()}/{place_id_counts.max()}")
+        print(
+            f" Min/Max images per place_id: {place_id_counts.min()}/{place_id_counts.max()}"
+        )
