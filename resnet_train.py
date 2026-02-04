@@ -409,6 +409,8 @@ def main():
         ],  # we only run the checkpointing callback (you can add more)
         reload_dataloaders_every_n_epochs=1,  # we reload the dataset to shuffle the order
         log_every_n_steps=20,
+        gradient_clip_algorithm="norm",
+        gradient_clip_val=1.0,
     )
 
     # we call the trainer, we give it the model and the datamodule

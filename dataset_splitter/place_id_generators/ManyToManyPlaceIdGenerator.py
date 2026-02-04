@@ -21,7 +21,7 @@ class ManyToManyPlaceIdGenerator:
         is_validation_set_v2=False,
         force_regenerate=False,
         include_uav_in_output=True,
-        is_non_overlaping_uavs=True,  # False
+        is_non_overlaping_uavs=False,  # False
     ):
         self.radius_neighbors_meters = radius_neighbors_meters
         self.top_n_neighbors = top_n_neighbors
@@ -78,9 +78,9 @@ class ManyToManyPlaceIdGenerator:
         return final_filtered_records
 
     def _fit_informativeness_filter(self, paths):
-        n = min(100, len(paths))
+        n = min(200, len(paths))
         sampled_paths = paths.sample(n=n)
-        self.informativeness_calculation.fit(sampled_paths)
+        # self.informativeness_calculation.fit(sampled_paths)
 
     def generate_place_ids(self):
 
@@ -134,6 +134,7 @@ class ManyToManyPlaceIdGenerator:
                 for index, row in uav_records.iterrows()
                 if not self.informativeness_calculation.analyze(row["img_path"])
             ]
+
             uav_records = uav_records.drop(indices_to_drop)
         #     uav_records = df[
         #         df["friendly-name"].str.contains("uav", case=False, na=False)
