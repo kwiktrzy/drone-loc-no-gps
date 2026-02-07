@@ -31,7 +31,7 @@ class PipelineConfig:
         self.DATAFRAMES_OVERLAPPING_PATCHES_DIR = (
             self.DATAFRAMES_ROOT / "overlapping_patches"
         )
-
+        self.DATAFRAMES_TILES_TRASH = self.DATAFRAMES_ROOT / "tiles_trash"
         self.THUMBNAILS_ONE_TO_ONE_OUTPUT_DIR = (
             self.DATASETS_ROOT / "train_tiles_one_to_one"
         )
@@ -295,6 +295,7 @@ def main():
                 is_validation_set_v2=d_conf.get("val_variant") == "v2",
                 # radius_neighbors_meters=70,
                 radius_neighbors_meters=70 if is_val else d_conf['crop_range_meters'],
+                tiles_trash_directory = config.DATAFRAMES_TILES_TRASH
         )
         
         generator.generate_place_ids()

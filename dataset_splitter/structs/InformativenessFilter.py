@@ -22,9 +22,9 @@ class FilterResult:
     is_informative: bool
     details: dict
 
-    def __repr__(self):
-        status = "✓ KEEP" if self.is_informative else "✗ REJECT"
-        return f"{status} | {self.details}"
+    # def __repr__(self):
+    #     status = "✓ KEEP" if self.is_informative else "✗ REJECT"
+    #     return f"{status} | {self.details}"
 
 
 class InformativenessFilter:

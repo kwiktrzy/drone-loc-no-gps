@@ -92,8 +92,8 @@ class VPRModel(pl.LightningModule):
         self.is_return_attention = True
 
         self.debug_config = {
-            "min_epoch": 30,
-            "loss_threshold": 0.04,
+            "min_epoch": 35,
+            "loss_threshold": 0.043,
             "top_k_triplets": 20,
             "save_attention": True,
             "save_triplet_images": True,
@@ -235,13 +235,25 @@ class VPRModel(pl.LightningModule):
     # this is the way Pytorch Lghtning is made. All about modularity, folks.
     def validation_step(self, batch, batch_idx, dataloader_idx=None):
         places, _ = batch
-        descriptors = self(places)
+
+        if len(places.shape) == 5:
+            BS, N, ch, h, w = places.shape
+            images = places.view(BS * N, ch, h, w)
+        else:
+            images = places
+
+        if self.is_return_attention:
+            descriptors, attn_maps = self(images)
+        else:
+            descriptors = self(images)
 
         # if we pass just one validation DataLoader the dataloader_idx is always None, which breaks the code...
         idx_to_use = dataloader_idx if dataloader_idx is not None else 0
 
-        self.val_outputs[idx_to_use].append(descriptors.detach().cpu())
-        return descriptors.detach().cpu()
+        descriptors_detached = descriptors.detach().cpu()
+        self.val_outputs[idx_to_use].append(descriptors_detached)
+
+        return descriptors_detached
 
     def on_validation_epoch_start(self):
         # reset the outputs list

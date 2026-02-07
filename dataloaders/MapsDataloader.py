@@ -24,7 +24,7 @@ class MapsDataModule(pl.LightningDataModule):
         # is_overlaping_patches_approach=False,
         tiles_csv_file_paths: List[str] = [],
         batch_size=32,
-        num_workers=3,
+        num_workers=6,
         val_set_names=[],
         shuffle_all=False,
         mean_std=IMAGENET_MEAN_STD,

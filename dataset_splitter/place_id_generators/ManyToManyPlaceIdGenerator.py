@@ -1,3 +1,5 @@
+from pathlib import Path
+import shutil
 from typing import List
 import pandas as pd
 import numpy as np
@@ -6,7 +8,6 @@ from dataset_splitter.AbstractGenerator import UTMPatchCoordinates, AbstractGene
 from dataset_splitter.structs.InformativenessFilter import InformativenessFilter
 from sklearn.neighbors import NearestNeighbors
 from collections import defaultdict
-
 # is_validation_set_v2 means we doing query like for train set but also added dont used sat images into Dataframe csv
 
 
@@ -17,6 +18,7 @@ class ManyToManyPlaceIdGenerator:
         top_n_neighbors: int = 1,
         csv_tiles_path: str = "",
         csv_place_ids_output_path: str = "",
+        tiles_trash_directory: Path = Path(),
         is_validation_set=False,
         is_validation_set_v2=False,
         force_regenerate=False,
@@ -35,6 +37,10 @@ class ManyToManyPlaceIdGenerator:
         self.used_sat_imgs = defaultdict(int)
         self.converters = AbstractGenerator()
         self.informativeness_calculation = InformativenessFilter()
+        self.tiles_trash_directory = tiles_trash_directory
+        
+        self.tiles_trash_directory.mkdir(parents=True, exist_ok=True)
+
 
     def __utm_to_columns(self, row):
         utm_cords = self.converters.gps_to_utm(row.lat, row.lon)
@@ -63,9 +69,12 @@ class ManyToManyPlaceIdGenerator:
         indices_to_skip = set()
         iloc_indices_to_keep = []
         for i in range(len(uav_records)):
-            if not self.informativeness_calculation.analyze(
+            result = self.informativeness_calculation.analyze(
                 uav_records.iloc[i]["img_path"]
-            ):
+            )
+            if not result.is_informative:
+                shutil.copy2(uav_records.iloc[i]["img_path"], self.tiles_trash_directory)
+                print(f"✗ REJECT: {result.details}")
                 continue
             if i in indices_to_skip:
                 continue
@@ -129,16 +138,18 @@ class ManyToManyPlaceIdGenerator:
                 df, uav_records, self.radius_neighbors_meters
             )
         else:
-            indices_to_drop = [
-                index
-                for index, row in uav_records.iterrows()
-                if not self.informativeness_calculation.analyze(row["img_path"])
-            ]
-
+            indices_to_drop = []
+            for index, row in uav_records.iterrows():
+                result = self.informativeness_calculation.analyze(row["img_path"])
+                if not result.is_informative:
+                    try:
+                        shutil.copy2(row["img_path"], self.tiles_trash_directory)
+                        print(f"✗ REJECT: {result.details}")
+                    except Exception as e:
+                        print(f"Warning: Could not copy file to trash: {e}")
+                    indices_to_drop.append(index)
+            
             uav_records = uav_records.drop(indices_to_drop)
-        #     uav_records = df[
-        #         df["friendly-name"].str.contains("uav", case=False, na=False)
-        #     ]
 
         if self.is_validation_set and not self.is_validation_set_v2:
             print(" -> MODE: Validation (query: SAT, Neighbor: UAV)")
@@ -253,7 +264,7 @@ class ManyToManyPlaceIdGenerator:
                     "source_file_path": self.csv_tiles_path,
                 }
                 csv_rows.append(query_row)
-        latest_max_id = csv_rows[-1]["place_id"] + 1
+        latest_max_id = csv_rows[-1]["place_id"] + 1 if csv_rows else 0
         if self.is_validation_set_v2:
             for idx, iter_row in database_records.iterrows():
                 if self.used_sat_imgs[iter_row["index"]] == 0:
