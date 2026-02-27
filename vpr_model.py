@@ -233,27 +233,37 @@ class VPRModel(pl.LightningModule):
     # TODO LZ: Verify it
     # For validation, we will also iterate step by step over the validation set
     # this is the way Pytorch Lghtning is made. All about modularity, folks.
-    def validation_step(self, batch, batch_idx, dataloader_idx=None):
+
+def validation_step(self, batch, batch_idx, dataloader_idx=None):
         places, _ = batch
 
-        if len(places.shape) == 5:
+        if places.dim() == 5:
             BS, N, ch, h, w = places.shape
             images = places.view(BS * N, ch, h, w)
-        else:
+        elif places.dim() == 4:
+            BS, ch, h, w = places.shape
             images = places
+        else:
+            raise ValueError(f"Unexpected places shape: {places.shape}")
 
+        # forward (spójne z training_step - przepuszczamy spłaszczony batch)
         if self.is_return_attention:
-            descriptors, attn_maps = self(images)
+            descriptors, _ = self(images)
         else:
             descriptors = self(images)
 
-        # if we pass just one validation DataLoader the dataloader_idx is always None, which breaks the code...
-        idx_to_use = dataloader_idx if dataloader_idx is not None else 0
+        if torch.isnan(descriptors).any():
+            raise ValueError("NaNs in descriptors (val)")
 
-        descriptors_detached = descriptors.detach().cpu()
-        self.val_outputs[idx_to_use].append(descriptors_detached)
+        # TUTAJ ZMIANA: Usunięto .mean(dim=1), zachowujemy kształt (BS * N, D)
+        descriptors_cpu = descriptors.detach().cpu()
 
-        return descriptors_detached
+        idx_to_use = 0 if dataloader_idx is None else dataloader_idx
+        while len(self.val_outputs) <= idx_to_use:
+            self.val_outputs.append([])
+
+        self.val_outputs[idx_to_use].append(descriptors_cpu)
+        return descriptors_cpu
 
     def on_validation_epoch_start(self):
         # reset the outputs list

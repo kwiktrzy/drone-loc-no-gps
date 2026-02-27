@@ -32,17 +32,22 @@ class VisLocDataset(Dataset):
 
         self.dataframe = self.__get_data_frames()
         self.places_ids = pd.unique(self.dataframe.index)
-
         # TODO: FINISH IT
 
     def __get_data_frames(self):
+        if not self.tiles_csv_file_paths:
+            empty_df = pd.DataFrame(columns=["place_id", "friendly-name", "img_path"])
+            return empty_df.set_index("place_id")
+
         df = pd.read_csv(self.tiles_csv_file_paths[0])
         df = df.sample(frac=1)
+
         for idx, csv_path in enumerate(self.tiles_csv_file_paths[1:], start=1):
             temp_df = pd.read_csv(csv_path)
             temp_df["place_id"] = temp_df["place_id"] + (idx * 10**5)
             temp_df = temp_df.sample(frac=1)
             df = pd.concat([df, temp_df], ignore_index=True)
+
         return df.set_index("place_id")
 
     @staticmethod
