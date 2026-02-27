@@ -233,8 +233,7 @@ class VPRModel(pl.LightningModule):
     # TODO LZ: Verify it
     # For validation, we will also iterate step by step over the validation set
     # this is the way Pytorch Lghtning is made. All about modularity, folks.
-
-def validation_step(self, batch, batch_idx, dataloader_idx=None):
+    def validation_step(self, batch, batch_idx, dataloader_idx=None):
         places, _ = batch
 
         if places.dim() == 5:
