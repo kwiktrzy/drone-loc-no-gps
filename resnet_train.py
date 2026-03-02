@@ -336,17 +336,23 @@ def main():
         optimizer="adamw",
         weight_decay=1e-4,  # 0.001 for sgd and 0 for adam,
         momentum=0.9,
-        lr_sched="multistep",
+        lr_sched="cosine",
         lr_sched_args={
-            "milestones": [40, 65],
-            "gamma": 0.1
+            "T_max": 35
         },
+
+        # lr_sched="multistep",
+        # lr_sched_args={
+        #     "milestones": [20, 45],
+        #     "gamma": 0.1
+        # },
+
         # ----- Loss functions
         # example: ContrastiveLoss, TripletMarginLoss, MultiSimilarityLoss,
         # FastAPLoss, CircleLoss, SupConLoss,
-        loss_name="TripletMarginLoss",
-        miner_name="TripletMarginMiner",  # example: TripletMarginMiner, MultiSimilarityMiner, PairMarginMiner
-        miner_margin=0.2,
+        loss_name="ContrastiveLoss",
+        miner_name="MultiSimilarityMiner",  # example: TripletMarginMiner, MultiSimilarityMiner, PairMarginMiner
+        miner_margin=0.1,
         faiss_gpu=False,
     )
 
@@ -409,7 +415,7 @@ def main():
             checkpoint_cb_v2_ch23
         ],  # we only run the checkpointing callback (you can add more)
         reload_dataloaders_every_n_epochs=1,  # we reload the dataset to shuffle the order
-        log_every_n_steps=20,
+        log_every_n_steps=10,
         gradient_clip_algorithm="norm",
         gradient_clip_val=1.0,
     )

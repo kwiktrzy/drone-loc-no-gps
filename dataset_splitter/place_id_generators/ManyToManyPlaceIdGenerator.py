@@ -23,7 +23,7 @@ class ManyToManyPlaceIdGenerator:
         is_validation_set_v2=False,
         force_regenerate=False,
         include_uav_in_output=True,
-        is_non_overlaping_uavs=False,  # False
+        is_non_overlaping_uavs=True,  # False
     ):
         self.radius_neighbors_meters = radius_neighbors_meters
         self.top_n_neighbors = top_n_neighbors

@@ -192,7 +192,7 @@ def test_informativeness_filter():
     print("=" * 60)
 
 
-test_informativeness_filter()
+# test_informativeness_filter()
 
 # filter = InformativenessFilter()
 # folder = "/home/user/PycharmProjects/mgr-repack/debug-04022026/Taizhou-1"

@@ -98,6 +98,8 @@ class VPRModel(pl.LightningModule):
             "save_attention": True,
             "save_triplet_images": True,
         }
+        print("LOSS DIST:", type(self.loss_fn.distance), "inv:", self.loss_fn.distance.is_inverted)
+        print("MINER DIST:", type(self.miner.distance), "inv:", self.miner.distance.is_inverted)
 
     # the forward pass of the lightning model
     def forward(self, x):
@@ -116,18 +118,12 @@ class VPRModel(pl.LightningModule):
                 weight_decay=self.weight_decay,
                 momentum=self.momentum,
             )
-        elif self.optimizer.lower() == "adamw":
-            optimizer = torch.optim.AdamW(
-                self.parameters(), lr=self.lr, weight_decay=self.weight_decay
-            )
-        elif self.optimizer.lower() == "adam":
+        elif self.optimizer.lower() in ["adamw", "adam"]:
             optimizer = torch.optim.AdamW(
                 self.parameters(), lr=self.lr, weight_decay=self.weight_decay
             )
         else:
-            raise ValueError(
-                f'Optimizer {self.optimizer} has not been added to "configure_optimizers()"'
-            )
+            raise ValueError(f'Optimizer {self.optimizer} not found')
 
         if self.lr_sched.lower() == "multistep":
             scheduler = lr_scheduler.MultiStepLR(
@@ -135,10 +131,14 @@ class VPRModel(pl.LightningModule):
                 milestones=self.lr_sched_args["milestones"],
                 gamma=self.lr_sched_args["gamma"],
             )
+            return [optimizer], [scheduler]
+
         elif self.lr_sched.lower() == "cosine":
             scheduler = lr_scheduler.CosineAnnealingLR(
                 optimizer, self.lr_sched_args["T_max"]
             )
+            return [optimizer], [scheduler]
+
         elif self.lr_sched.lower() == "linear":
             scheduler = lr_scheduler.LinearLR(
                 optimizer,
@@ -146,20 +146,31 @@ class VPRModel(pl.LightningModule):
                 end_factor=self.lr_sched_args["end_factor"],
                 total_iters=self.lr_sched_args["total_iters"],
             )
-
-        return [optimizer], [scheduler]
+            return [optimizer], [{"scheduler": scheduler, "interval": "step"}]
 
     # configure the optizer step, takes into account the warmup stage
     def optimizer_step(self, epoch, batch_idx, optimizer, optimizer_closure):
-        # warm up lr
         optimizer.step(closure=optimizer_closure)
-        self.lr_schedulers().step()
+
+    # def optimizer_step(self, epoch, batch_idx, optimizer, optimizer_closure):
+    #     # warm up lr
+    #     optimizer.step(closure=optimizer_closure)
+    #     self.lr_schedulers().step()
 
     #  The loss function call (this method will be called at each training iteration)
     def loss_function(self, descriptors, labels):
         # we mine the pairs/triplets if there is an online mining strategy
         if self.miner is not None:
             miner_outputs = self.miner(descriptors, labels)
+
+            if len(miner_outputs) == 4:
+                a_pos, p, a_neg, n = miner_outputs
+                self.log("mined_pos_pairs", float(a_pos.numel()), prog_bar=True, logger=True)
+                self.log("mined_neg_pairs", float(a_neg.numel()), prog_bar=True, logger=True)
+            elif len(miner_outputs) == 3:
+                a, p, n = miner_outputs
+                self.log("mined_triplets", float(a.numel()), prog_bar=True, logger=True)
+
             loss = self.loss_fn(descriptors, labels, miner_outputs)
 
             # calculate the % of trivial pairs/triplets
@@ -227,7 +238,9 @@ class VPRModel(pl.LightningModule):
         return {"loss": loss}
 
     def on_train_epoch_end(self):
-        # we empty the batch_acc list for next epoch
+        opt = self.optimizers()
+        lr = opt.param_groups[0]["lr"]
+        self.log("lr", lr, prog_bar=True, logger=True)
         self.batch_acc = []
 
     # TODO LZ: Verify it
@@ -449,6 +462,7 @@ class VPRModel(pl.LightningModule):
         attn_maps,
         batch_idx,
     ):
+    
         cfg = self.debug_config
         if not (
             self.current_epoch >= cfg["min_epoch"]
@@ -490,6 +504,9 @@ class VPRModel(pl.LightningModule):
                 )
             elif len(miner_outputs) == 4:
                 a_pos, p, a_neg, n = miner_outputs
+                # self.log("mined_pos_pairs", float(a_pos.numel()), prog_bar=True)
+                # self.log("mined_neg_pairs", float(a_neg.numel()), prog_bar=True)
+                
                 if a_pos.numel() == 0 and a_neg.numel() == 0:
                     return
                 results = self.analyze_pair_miner(
@@ -777,7 +794,7 @@ class VPRModel(pl.LightningModule):
             "intra_class_std": round(intra.std(), 4),
             "inter_class_mean": round(inter.mean(), 4),
             "inter_class_std": round(inter.std(), 4),
-            "class_separation": round(separation, 4),  # Wyższe = lepsze!
+            "class_separation": round(separation, 4),  # Higer = better!
             "entropy_mean": round(neighborhood_entropy.mean().item(), 4),
             "entropy_std": round(neighborhood_entropy.std().item(), 4),
             "entropy_min": round(neighborhood_entropy.min().item(), 4),

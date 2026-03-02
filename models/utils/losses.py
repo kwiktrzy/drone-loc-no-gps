@@ -13,7 +13,7 @@ def get_loss(loss_name):
             alpha=1.0, beta=50, base=0.0, distance=CosineSimilarity()
         )
     if loss_name == "ContrastiveLoss":
-        return losses.ContrastiveLoss(pos_margin=0, neg_margin=1)
+        return losses.ContrastiveLoss(pos_margin=0.8, neg_margin=0.4, distance=CosineSimilarity())
     if loss_name == "Lifted":
         return losses.GeneralizedLiftedStructureLoss(
             neg_margin=0, pos_margin=1, distance=DotProductSimilarity()
@@ -50,6 +50,6 @@ def get_miner(miner_name, margin=0.1):
         return miners.MultiSimilarityMiner(epsilon=margin, distance=CosineSimilarity())
     if miner_name == "PairMarginMiner":
         return miners.PairMarginMiner(
-            pos_margin=0.7, neg_margin=0.3, distance=DotProductSimilarity()
+            pos_margin=0.8, neg_margin=0.6, distance=DotProductSimilarity()
         )
     return None
