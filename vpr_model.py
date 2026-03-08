@@ -158,7 +158,27 @@ class VPRModel(pl.LightningModule):
     #     self.lr_schedulers().step()
 
     #  The loss function call (this method will be called at each training iteration)
-    def loss_function(self, descriptors, labels):
+    def loss_function(self, descriptors, labels, domains=None):
+        """
+        Compute the metric-learning loss for the current batch.
+    
+        Why this method exists:
+        - it keeps mining and loss computation in one place
+        - it logs how many examples are actually mined
+        - it optionally adds domain-aware diagnostics for cross-domain training
+    
+        Important:
+        The mined counts below tell us how much supervision the miner is producing,
+        but they do not tell us whether those examples are useful or noisy.
+        For that reason, similarity statistics are logged separately in
+        `log_basic_mining_stats(...)`.
+    
+        Example:
+        - many mined negatives + high negative similarity may indicate difficult or noisy hard negatives
+        - few mined examples may indicate that the miner became too strict
+        """
+        
+        miner_outputs = None
         # we mine the pairs/triplets if there is an online mining strategy
         if self.miner is not None:
             miner_outputs = self.miner(descriptors, labels)
@@ -171,8 +191,12 @@ class VPRModel(pl.LightningModule):
                 a, p, n = miner_outputs
                 self.log("mined_triplets", float(a.numel()), prog_bar=True, logger=True)
 
-            loss = self.loss_fn(descriptors, labels, miner_outputs)
 
+            self.log_basic_mining_stats(descriptors, miner_outputs)
+            if domains is not None:
+                self.log_domain_aware_mining(descriptors, domains, miner_outputs)
+            
+            loss = self.loss_fn(descriptors, labels, miner_outputs)
             # calculate the % of trivial pairs/triplets
             # which do not contribute in the loss value
             nb_samples = descriptors.shape[0]
@@ -205,34 +229,41 @@ class VPRModel(pl.LightningModule):
 
     # This is the training step that's executed at each iteration
     def training_step(self, batch, batch_idx):
-        places, labels = batch
+        domains = None  
 
-        # Note that GSVCities yields places (each containing N images)
-        # which means the dataloader will return a batch containing BS places
-        BS, N, ch, h, w = places.shape
+        if len(batch) == 2:
+            places, labels = batch
+        elif len(batch) == 3:
+            places, labels, domains = batch
+        else:
+            raise ValueError(f"Unexpected batch structure of length {len(batch)}")  
 
-        # reshape places and labels
+        BS, N, ch, h, w = places.shape  
+
         images = places.view(BS * N, ch, h, w)
-        labels = labels.view(-1)
+        labels = labels.view(-1)    
+
+        if domains is not None:
+            domains = domains.view(-1).to(labels.device)    
 
         attn_maps = None
-        # Feed forward the batch to the model
         if self.is_return_attention:
             descriptors, attn_maps = self(images)
         else:
-            descriptors = self(
-                images
-            )  # Here we are calling the method forward that we defined above
+            descriptors = self(images)  
 
         if torch.isnan(descriptors).any():
-            raise ValueError("NaNs in descriptors")
-
-        loss, miner_outputs = self.loss_function(descriptors, labels)
+            raise ValueError("NaNs in descriptors") 
+        
+        loss_out = self.loss_function(descriptors, labels, domains=domains) 
 
         if self.is_loss_debug:
+            loss, miner_outputs = loss_out
             self.debug_step(
                 descriptors, labels, images, loss, miner_outputs, attn_maps, batch_idx
             )
+        else:
+            loss = loss_out 
 
         self.log("loss", loss.item(), logger=True, prog_bar=True)
         return {"loss": loss}
@@ -296,35 +327,38 @@ class VPRModel(pl.LightningModule):
         for this project (MSLS val, Pittburg val), it is always references then queries
         [R1, R2, ..., Rn, Q1, Q2, ...]
         """
-        val_step_outputs = self.val_outputs
+        val_step_outputs = self.val_outputs 
 
-        dm = self.trainer.datamodule
+        dm = self.trainer.datamodule    
+
+        # ADDED: aggregate R1 over all validation datasets
+        all_val_r1 = [] 
 
         # The following line is a hack: if we have only one validation set, then
         # we need to put the outputs in a list (Pytorch Lightning does not do it presently)
         # if len(dm.val_datasets) == 1:  # we need to put the outputs in a list
-        #     val_step_outputs = [val_step_outputs]
+        #     val_step_outputs = [val_step_outputs] 
 
         for i, (val_set_name, val_dataset) in enumerate(
             zip(dm.val_set_names, dm.val_datasets)
-        ):
+        ):  
 
             short_val_name = Path(val_set_name).stem
-            feats = torch.concat(val_step_outputs[i], dim=0)
+            feats = torch.concat(val_step_outputs[i], dim=0)    
 
             if "Shandan" in short_val_name:
                 num_references = len(val_dataset.db_image_paths)
-                positives = val_dataset.get_positives()
+                positives = val_dataset.get_positives() 
 
                 variant = (
                     "v1"
                     if "v1" in short_val_name
                     else ("v2" if "v2" in short_val_name else "base")
-                )
+                )   
 
                 print(f"\n Shandan ({variant}): {short_val_name}")
                 print(f" Queries: {len(positives)}")
-                print(f" References: {num_references}")
+                print(f" References: {num_references}") 
 
                 cnts = np.array([len(p) for p in positives])
                 zero_pos = (cnts == 0).sum()
@@ -336,17 +370,17 @@ class VPRModel(pl.LightningModule):
                     )
             elif "Changjiang-23" in short_val_name:
                 num_references = len(val_dataset.db_image_paths)
-                positives = val_dataset.get_positives()
+                positives = val_dataset.get_positives() 
 
                 variant = (
                     "v1"
                     if "v1" in short_val_name
                     else ("v2" if "v2" in short_val_name else "base")
-                )
+                )   
 
                 print(f"\n Changjiang-23 ({variant}): {short_val_name}")
                 print(f" Queries: {len(positives)}")
-                print(f" References: {num_references}")
+                print(f" References: {num_references}") 
 
                 cnts = np.array([len(p) for p in positives])
                 zero_pos = (cnts == 0).sum()
@@ -367,7 +401,7 @@ class VPRModel(pl.LightningModule):
             # positives = val_dataset.pIdx
             else:
                 print(f"Please implement validation_epoch_end for {val_set_name}")
-                raise NotImplemented
+                raise NotImplemented    
 
             r_list = feats[:num_references]
             q_list = feats[num_references:]
@@ -389,7 +423,31 @@ class VPRModel(pl.LightningModule):
                 dataset_name=short_val_name,
                 faiss_gpu=self.faiss_gpu,
                 testing=True,
+            )   
+
+            # ADDED: geo-debug for top1 misses
+            geo_stats = self.compute_val_top1_geodist_stats(
+                val_dataset=val_dataset,
+                predictions=predictions,
+                positives=positives,
             )
+            if geo_stats is not None:
+                for stat_name, stat_value in geo_stats.items():
+                    self.log(
+                        f"{short_val_name}/{stat_name}",
+                        stat_value,
+                        prog_bar=False,
+                        logger=True,
+                    )
+                self.save_val_geo_stats(short_val_name, geo_stats)  
+
+                print(
+                    f" Geo debug: valid_q={geo_stats['top1_geo_valid_queries']:.0f}, "
+                    f"skip_zero_pos={geo_stats['top1_geo_skipped_zero_pos_queries']:.0f}, "
+                    f"miss_mean_m={geo_stats['top1_miss_geodist_mean']:.2f}, "
+                    f"miss_med_m={geo_stats['top1_miss_geodist_median']:.2f}"
+                )   
+
             self.val_debug_results(
                 current_val_dataset=val_dataset,
                 q_list=q_list,
@@ -397,21 +455,39 @@ class VPRModel(pl.LightningModule):
                 positives=positives,
                 num_references=num_references,
                 short_val_name=short_val_name,
-            )
-            del r_list, q_list, feats, num_references, positives
+            )   
 
             metric_name_r1 = f"{short_val_name}/R1"
             metric_name_r5 = f"{short_val_name}/R5"
             print(
                 f"Metrics: '{metric_name_r1}' = {pitts_dict[1]:.4f}, '{metric_name_r5}' = {pitts_dict[5]:.4f}"
-            )
+            )   
 
             self.log(f"{short_val_name}/R1", pitts_dict[1], prog_bar=False, logger=True)
             self.log(f"{short_val_name}/R5", pitts_dict[5], prog_bar=False, logger=True)
             self.log(
                 f"{short_val_name}/R10", pitts_dict[10], prog_bar=False, logger=True
-            )
-        print("\n\n")
+            )   
+
+            # ADDED: collect per-dataset R1 for aggregate metrics
+            all_val_r1.append(float(pitts_dict[1])) 
+
+            del r_list, q_list, feats, num_references, positives    
+
+        # ADDED: aggregate metrics over all validation datasets
+        if len(all_val_r1) > 0:
+            mean_r1_4sets = float(np.mean(all_val_r1))
+            min_r1_4sets = float(np.min(all_val_r1))    
+
+            self.log("val_mean_R1_4sets", mean_r1_4sets, prog_bar=True, logger=True)
+            self.log("val_min_R1_4sets", min_r1_4sets, prog_bar=True, logger=True)  
+
+            print(
+                f"Aggregate metrics: val_mean_R1_4sets = {mean_r1_4sets:.4f}, "
+                f"val_min_R1_4sets = {min_r1_4sets:.4f}"
+            )   
+
+        print("\n\n")   
 
         # reset the outputs list
         self.val_outputs = []
@@ -821,3 +897,310 @@ class VPRModel(pl.LightningModule):
         elif neg_bad:
             return "NEGATIVE_TOO_CLOSE"
         return "MARGINAL"
+
+
+    def log_basic_mining_stats(self, descriptors, miner_outputs):
+        """
+        Log similarity statistics for mined examples.   
+
+        Why this method exists:
+        Mined counts alone are not enough. Two runs may mine the same number of examples,
+        but one run may mine clean/useful examples while another may mine noisy ones.   
+
+        What we log:
+        - mean similarity of mined positive pairs
+        - mean similarity of mined negative pairs
+        - for triplets: mean anchor-positive and anchor-negative similarity 
+
+        How to read it:
+        - higher positive similarity is usually good
+        - very high negative similarity means the miner is finding hard confusers
+        - if negative similarity stays too high for too long, the model may struggle to separate places 
+
+        Example:
+        - mined_neg_sim_mean rising together with many mined negatives can indicate
+          aggressive mining pressure or possible false negatives
+        - mined_pos_sim_mean rising over training usually means positives are becoming tighter
+        """
+        if miner_outputs is None:
+            return  
+
+        dist = self.get_distance_obj(self.loss_fn, self.miner)  
+
+        with torch.no_grad():
+            mat = dist(descriptors, descriptors).detach()   
+
+            if len(miner_outputs) == 4:
+                a_pos, p, a_neg, n = miner_outputs  
+
+                if a_pos.numel() > 0:
+                    self.log(
+                        "mined_pos_sim_mean",
+                        float(mat[a_pos, p].mean().item()),
+                        on_step=True,
+                        on_epoch=True,
+                        prog_bar=False,
+                        logger=True,
+                    )   
+
+                if a_neg.numel() > 0:
+                    self.log(
+                        "mined_neg_sim_mean",
+                        float(mat[a_neg, n].mean().item()),
+                        on_step=True,
+                        on_epoch=True,
+                        prog_bar=False,
+                        logger=True,
+                    )   
+
+            elif len(miner_outputs) == 3:
+                a, p, n = miner_outputs 
+
+                if a.numel() > 0:
+                    self.log(
+                        "triplet_pos_sim_mean",
+                        float(mat[a, p].mean().item()),
+                        on_step=True,
+                        on_epoch=True,
+                        prog_bar=False,
+                        logger=True,
+                    )
+                    self.log(
+                        "triplet_neg_sim_mean",
+                        float(mat[a, n].mean().item()),
+                        on_step=True,
+                        on_epoch=True,
+                        prog_bar=False,
+                        logger=True,
+                    )   
+
+    def log_domain_aware_mining(self, descriptors, domains, miner_outputs):
+        """
+        Domain-aware mining analysis.
+
+        Domains:
+        - 0 = UAV
+        - 1 = SAT
+
+        We split mined pairs into:
+        - UAV-UAV
+        - SAT-SAT
+        - UAV-SAT
+
+        Interpretation:
+        - high mined_pos_uav_sat_share:
+            miner still sees useful cross-domain positives
+        - high mined_neg_uav_sat_share with high similarity:
+            model is confused across domains or training is over-pushing cross-domain negatives
+        """
+        dist = self.get_distance_obj(self.loss_fn, self.miner)
+
+        with torch.no_grad():
+            mat = dist(descriptors, descriptors).detach()
+
+            if len(miner_outputs) == 4:
+                a_pos, p, a_neg, n = miner_outputs
+                self._log_pair_group("mined_pos", a_pos, p, domains, mat)
+                self._log_pair_group("mined_neg", a_neg, n, domains, mat)
+
+            elif len(miner_outputs) == 3:
+                a, p, n = miner_outputs
+                self._log_pair_group("triplet_pos", a, p, domains, mat)
+                self._log_pair_group("triplet_neg", a, n, domains, mat)
+
+
+    def _log_pair_group(self, prefix, idx_a, idx_b, domains, sim_matrix):
+        """
+        Log how mined examples are distributed across domain combinations.
+
+        This helper is shared by pair-based and triplet-based miners.
+
+        Example:
+        - prefix='mined_neg' produces logs such as:
+          mined_neg_uav_uav_share, mined_neg_sat_sat_share, mined_neg_uav_sat_share
+
+        These logs are intended mainly for epoch-level analysis, not step-level debugging.
+        """
+        if idx_a.numel() == 0:
+            return
+
+        da = domains[idx_a]
+        db = domains[idx_b]
+        vals = sim_matrix[idx_a, idx_b]
+
+        masks = {
+            "uav_uav": (da == 0) & (db == 0),
+            "sat_sat": (da == 1) & (db == 1),
+            "uav_sat": da != db,
+        }
+
+        total = max(int(idx_a.numel()), 1)
+
+        for name, mask in masks.items():
+            count = int(mask.sum().item())
+            share = float(count / total)
+
+            self.log(
+                f"{prefix}_{name}_count",
+                count,
+                on_step=False,
+                on_epoch=True,
+                prog_bar=False,
+                logger=True,
+            )
+            self.log(
+                f"{prefix}_{name}_share",
+                share,
+                on_step=False,
+                on_epoch=True,
+                prog_bar=False,
+                logger=True,
+            )
+
+            if count > 0:
+                self.log(
+                    f"{prefix}_{name}_sim_mean",
+                    float(vals[mask].mean().item()),
+                    on_step=False,
+                    on_epoch=True,
+                    prog_bar=False,
+                    logger=True,
+                )
+
+
+    def compute_val_top1_geodist_stats(self, val_dataset, predictions, positives):
+        """
+        Analyze top-1 retrieval misses by geographic distance.
+    
+        Why this matters:
+        Recall@1 treats every miss equally, but not every miss is equally severe.
+        A prediction just outside the positive radius may indicate a near-correct retrieval,
+        while a prediction far away is a clear localization failure.
+    
+        This diagnostic helps separate:
+        - threshold / annotation effects
+        - genuine retrieval errors
+    
+        Distance buckets:
+        - <100 m: suspicious if counted as a miss, may indicate GT/indexing issues
+        - 100-150 m: near-miss just outside the positive radius
+        - 150-250 m: moderate miss
+        - >250 m: clear miss
+    
+        Important:
+        Queries with zero positives are skipped, otherwise broken or unmatched validation
+        samples would artificially inflate the miss statistics.
+        """
+        if not hasattr(val_dataset, "q_utm_np") or not hasattr(val_dataset, "db_utm_np"):
+            return None
+
+        q_utm = np.asarray(val_dataset.q_utm_np)
+        db_utm = np.asarray(val_dataset.db_utm_np)
+
+        if len(q_utm) != len(predictions):
+            print(
+                f"[WARN] q_utm length {len(q_utm)} != num predictions {len(predictions)}. "
+                "Skipping geo debug."
+            )
+            return None
+
+        miss_under_100 = 0
+        miss_100_150 = 0
+        miss_150_250 = 0
+        miss_over_250 = 0
+
+        miss_dists = []
+        hit_count = 0
+        valid_queries = 0
+        skipped_zero_positive_queries = 0
+
+        for q_idx in range(len(predictions)):
+            if len(positives[q_idx]) == 0:
+                skipped_zero_positive_queries += 1
+                continue
+
+            if len(predictions[q_idx]) == 0:
+                continue
+
+            valid_queries += 1
+
+            top1_db_idx = int(predictions[q_idx][0])
+            is_hit = top1_db_idx in positives[q_idx]
+
+            dist_m = float(np.linalg.norm(q_utm[q_idx] - db_utm[top1_db_idx]))
+
+            if is_hit:
+                hit_count += 1
+            else:
+                miss_dists.append(dist_m)
+
+                if dist_m < 100.0:
+                    miss_under_100 += 1
+                elif dist_m < 150.0:
+                    miss_100_150 += 1
+                elif dist_m < 250.0:
+                    miss_150_250 += 1
+                else:
+                    miss_over_250 += 1
+
+        total_misses = len(miss_dists)
+
+        if valid_queries == 0:
+            return {
+                "top1_geo_valid_queries": 0.0,
+                "top1_geo_skipped_zero_pos_queries": float(skipped_zero_positive_queries),
+                "top1_hit_count": 0.0,
+                "top1_miss_count": 0.0,
+                "top1_hit_rate_valid": 0.0,
+                "top1_miss_under_100_share": 0.0,
+                "top1_miss_100_150_share": 0.0,
+                "top1_miss_150_250_share": 0.0,
+                "top1_miss_over_250_share": 0.0,
+                "top1_miss_geodist_mean": 0.0,
+                "top1_miss_geodist_median": 0.0,
+            }
+
+        if total_misses == 0:
+            return {
+                "top1_geo_valid_queries": float(valid_queries),
+                "top1_geo_skipped_zero_pos_queries": float(skipped_zero_positive_queries),
+                "top1_hit_count": float(hit_count),
+                "top1_miss_count": 0.0,
+                "top1_hit_rate_valid": float(hit_count / valid_queries),
+                "top1_miss_under_100_share": 0.0,
+                "top1_miss_100_150_share": 0.0,
+                "top1_miss_150_250_share": 0.0,
+                "top1_miss_over_250_share": 0.0,
+                "top1_miss_geodist_mean": 0.0,
+                "top1_miss_geodist_median": 0.0,
+            }
+
+        miss_dists_np = np.array(miss_dists, dtype=np.float32)
+
+        return {
+            "top1_geo_valid_queries": float(valid_queries),
+            "top1_geo_skipped_zero_pos_queries": float(skipped_zero_positive_queries),
+            "top1_hit_count": float(hit_count),
+            "top1_miss_count": float(total_misses),
+            "top1_hit_rate_valid": float(hit_count / valid_queries),
+            "top1_miss_under_100_share": float(miss_under_100 / total_misses),
+            "top1_miss_100_150_share": float(miss_100_150 / total_misses),
+            "top1_miss_150_250_share": float(miss_150_250 / total_misses),
+            "top1_miss_over_250_share": float(miss_over_250 / total_misses),
+            "top1_miss_geodist_mean": float(miss_dists_np.mean()),
+            "top1_miss_geodist_median": float(np.median(miss_dists_np)),
+        }
+
+
+    def save_val_geo_stats(self, short_val_name, geo_stats, debug_dir="debug_vis"):
+        os.makedirs(debug_dir, exist_ok=True)
+
+        row = {
+            "epoch": self.current_epoch,
+            "dataset": short_val_name,
+            **geo_stats,
+        }
+
+        path = os.path.join(debug_dir, "debug_val_geo_stats.csv")
+        df = pd.DataFrame([row])
+        df.to_csv(path, mode="a", header=not os.path.exists(path), index=False)
