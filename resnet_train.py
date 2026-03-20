@@ -1,21 +1,23 @@
-from turtle import st
 from typing import List
+import gc
+import json
+import os
+import shutil
+from pathlib import Path
+
+import pandas as pd
 import pytorch_lightning as pl
+import torch
+
+from pytorch_metric_learning import losses, miners
+from pytorch_metric_learning.distances import CosineSimilarity
 
 from dataloaders.MapsDataloader import MapsDataModule
 from dataset_splitter.place_id_generators.ManyToManyPlaceIdGenerator import ManyToManyPlaceIdGenerator
 from dataset_splitter.structs.MapSatellite import MapSatellite
-from dataset_splitter.satellite_generators.TilesGenerator import TilesGenerator
 from dataset_splitter.satellite_generators.OverlapingTilesGenerator import OverlapingTilesGenerator
 from dataset_splitter.uav_generators.UavSmallerCropGenerator import UavSmallerCropGenerator
-from dataset_splitter.uav_generators.UavCropGenerator import UavCropGenerator
-from dataset_splitter.place_id_generators.PlaceIdGenerator import PlaceIdGenerator
 from vpr_model import VPRModel
-import pandas as pd
-from pathlib import Path
-import os
-import torch
-import shutil
 
 
 class PipelineConfig:
@@ -88,11 +90,152 @@ def clearup_generated_data(
 
     return False
 
+
 def get_processed_path(base_path: str, suffix: str) -> str:
     path_obj = Path(base_path)
     new_filename = f"{path_obj.stem}-{suffix}{path_obj.suffix}"
-    
     return str(path_obj.parent / new_filename)
+
+
+def override_metric_learning_objects(model, exp_cfg):
+    """
+    Nadpisuje loss i miner po inicjalizacji modelu,
+    żeby nie trzeba było teraz przerabiać utils.get_loss/get_miner.
+    """
+    loss_name = exp_cfg["loss_name"]
+    miner_name = exp_cfg["miner_name"]
+
+    # --------------------------
+    # LOSS
+    # --------------------------
+    if loss_name == "TripletMarginLoss":
+        model.loss_fn = losses.TripletMarginLoss(
+            margin=exp_cfg.get("loss_margin", 0.05),
+            swap=exp_cfg.get("swap", False),
+            smooth_loss=exp_cfg.get("smooth_loss", False),
+            distance=CosineSimilarity(),
+        )
+
+    elif loss_name == "MultiSimilarityLoss":
+        model.loss_fn = losses.MultiSimilarityLoss(
+            alpha=exp_cfg.get("ms_alpha", 1.0),
+            beta=exp_cfg.get("ms_beta", 50.0),
+            base=exp_cfg.get("ms_base", 0.0),
+            distance=CosineSimilarity(),
+        )
+
+    else:
+        raise NotImplementedError(f"Override not implemented for loss: {loss_name}")
+
+    # --------------------------
+    # MINER
+    # --------------------------
+    if miner_name == "TripletMarginMiner":
+        model.miner = miners.TripletMarginMiner(
+            margin=exp_cfg.get("miner_margin", 0.05),
+            type_of_triplets=exp_cfg.get("type_of_triplets", "all"),
+            distance=CosineSimilarity(),
+        )
+
+    elif miner_name == "MultiSimilarityMiner":
+        model.miner = miners.MultiSimilarityMiner(
+            epsilon=exp_cfg.get("miner_margin", 0.1),
+            distance=CosineSimilarity(),
+        )
+
+    elif miner_name is None:
+        model.miner = None
+
+    else:
+        raise NotImplementedError(f"Override not implemented for miner: {miner_name}")
+
+    print("=== OVERRIDDEN OBJECTS ===")
+    print("LOSS:", model.loss_fn)
+    print("MINER:", model.miner)
+
+    if hasattr(model.loss_fn, "distance") and model.loss_fn.distance is not None:
+        print("LOSS DIST:", type(model.loss_fn.distance), "inv:", model.loss_fn.distance.is_inverted)
+    else:
+        print("LOSS DIST: None")
+
+    if model.miner is not None and hasattr(model.miner, "distance") and model.miner.distance is not None:
+        print("MINER DIST:", type(model.miner.distance), "inv:", model.miner.distance.is_inverted)
+    else:
+        print("MINER: None")
+
+    return model
+
+
+def build_callbacks(run_dir: Path):
+    ckpt_dir = run_dir / "checkpoints"
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+
+    checkpoint_mean = pl.callbacks.ModelCheckpoint(
+        dirpath=str(ckpt_dir),
+        monitor="val_mean_R1_4sets",
+        filename="best_mean-{epoch:02d}-{val_mean_R1_4sets:.4f}",
+        auto_insert_metric_name=False,
+        save_weights_only=True,
+        save_top_k=1,
+        save_last=True,
+        mode="max",
+    )
+
+    checkpoint_min = pl.callbacks.ModelCheckpoint(
+        dirpath=str(ckpt_dir),
+        monitor="val_min_R1_4sets",
+        filename="best_min-{epoch:02d}-{val_min_R1_4sets:.4f}",
+        auto_insert_metric_name=False,
+        save_weights_only=True,
+        save_top_k=1,
+        save_last=False,
+        mode="max",
+    )
+
+    checkpoint_shandan_v1 = pl.callbacks.ModelCheckpoint(
+        dirpath=str(ckpt_dir),
+        monitor="Shandan-v1_one_to_one/R1",
+        filename="best_shandan_v1-{epoch:02d}-{Shandan-v1_one_to_one/R1:.4f}",
+        auto_insert_metric_name=False,
+        save_weights_only=True,
+        save_top_k=1,
+        save_last=False,
+        mode="max",
+    )
+
+    checkpoint_changjiang_v1 = pl.callbacks.ModelCheckpoint(
+        dirpath=str(ckpt_dir),
+        monitor="Changjiang-23-v1_one_to_one/R1",
+        filename="best_changjiang_v1-{epoch:02d}-{Changjiang-23-v1_one_to_one/R1:.4f}",
+        auto_insert_metric_name=False,
+        save_weights_only=True,
+        save_top_k=1,
+        save_last=False,
+        mode="max",
+    )
+
+    callbacks = [
+        checkpoint_mean,
+        checkpoint_min,
+        checkpoint_shandan_v1,
+        checkpoint_changjiang_v1,
+    ]
+
+    cb_map = {
+        "mean": checkpoint_mean,
+        "min": checkpoint_min,
+        "shandan_v1": checkpoint_shandan_v1,
+        "changjiang_v1": checkpoint_changjiang_v1,
+    }
+    return callbacks, cb_map
+
+
+def score_to_float(x):
+    if x is None:
+        return None
+    if torch.is_tensor(x):
+        return float(x.detach().cpu().item())
+    return float(x)
 
 
 def main():
@@ -106,7 +249,7 @@ def main():
             "uav_visloc_id": "03",
             "map_filename": "satellite03.tif",
             "crop_range_meters": 295,
-            "overlap_stride_meters": 195,  
+            "overlap_stride_meters": 195,
             "output_suffix": "one_to_one"
         },
         {
@@ -116,7 +259,7 @@ def main():
             "map_filename": "satellite05.tif",
             "crop_range_meters": 365,
             "overlap_stride_meters": 265,
-             "output_suffix": "one_to_one"
+            "output_suffix": "one_to_one"
         },
         {
             "set_type": "train",
@@ -135,7 +278,7 @@ def main():
             "crop_range_meters": 310,
             "overlap_stride_meters": 200,
             "val_variant": "v1",
-            "output_suffix": "v1_one_to_one"            
+            "output_suffix": "v1_one_to_one"
         },
         {
             "set_type": "val",
@@ -145,7 +288,7 @@ def main():
             "crop_range_meters": 310,
             "overlap_stride_meters": 210,
             "val_variant": "v2",
-            "output_suffix": "v2_one_to_one"            
+            "output_suffix": "v2_one_to_one"
         },
         {
             "set_type": "train",
@@ -165,13 +308,6 @@ def main():
             "overlap_stride_meters": 225,
             "output_suffix": "one_to_one"
         },
-        # # {
-        # #     "set_type": "train",
-        # #     "region_name": "Donghuayuan",
-        # #     "uav_visloc_id": "07",
-        # #     "map_filename": "satellite07.tif",
-        # #     "output_suffix": "one_to_one"            
-        # # },
         {
             "set_type": "train",
             "region_name": "Huzhou-3",
@@ -179,14 +315,8 @@ def main():
             "map_filename": "satellite08.tif",
             "crop_range_meters": 320,
             "overlap_stride_meters": 220,
-            "output_suffix": "one_to_one"            
+            "output_suffix": "one_to_one"
         },
-        # {
-        #     "set_type": "train",
-        #     "region_name": "Huzhou-3-1",
-        #     "uav_visloc_id": "09",
-        #     "map_filename": "satellite09.tif",
-        # },
         {
             "set_type": "train",
             "region_name": "Huailai",
@@ -194,7 +324,7 @@ def main():
             "map_filename": "satellite10.tif",
             "crop_range_meters": 315,
             "overlap_stride_meters": 215,
-            "output_suffix": "one_to_one"            
+            "output_suffix": "one_to_one"
         },
         {
             "set_type": "val",
@@ -204,7 +334,7 @@ def main():
             "crop_range_meters": 370,
             "overlap_stride_meters": 270,
             "val_variant": "v1",
-            "output_suffix": "v1_one_to_one"            
+            "output_suffix": "v1_one_to_one"
         },
         {
             "set_type": "val",
@@ -214,9 +344,8 @@ def main():
             "crop_range_meters": 370,
             "overlap_stride_meters": 270,
             "val_variant": "v2",
-            "output_suffix": "v2_one_to_one"            
+            "output_suffix": "v2_one_to_one"
         },
-        # {'set_type': 'Huailai', 'region_name': 'Shandong-1', 'dataset_type': 'AerialVL'},
     ]
 
     all_csv_paths_one_to_one = {}
@@ -240,7 +369,7 @@ def main():
                     / d_conf["uav_visloc_id"]
                     / d_conf["map_filename"]
                 )
-                
+
                 map_sat = MapSatellite(
                     csv_path=str(
                         config.UAV_VISLOC_ROOT / "satellite_ coordinates_range.csv"
@@ -250,13 +379,13 @@ def main():
                     region_name=region_name,
                     friendly_name=f"visloc-{region_name}-{d_conf['uav_visloc_id']}-satellite",
                 )
-                
+
                 thumb_gen = OverlapingTilesGenerator(
                     output_dir=str(config.THUMBNAILS_ONE_TO_ONE_OUTPUT_DIR),
                     satellite_map_names=[map_sat],
-                    crop_range_meters=d_conf['crop_range_meters'],
-                    overlap_stride_meters=d_conf['overlap_stride_meters'],
-                    is_rebuild_csv=config.force_regenerate_tiles,  # Rebuild for each new region processing
+                    crop_range_meters=d_conf["crop_range_meters"],
+                    overlap_stride_meters=d_conf["overlap_stride_meters"],
+                    is_rebuild_csv=config.force_regenerate_tiles,
                 )
                 thumb_gen.generate_tiles()
 
@@ -274,7 +403,7 @@ def main():
                     ),
                     region_name=region_name,
                     friendly_name=f"visloc-{region_name}-{d_conf['uav_visloc_id']}-uav",
-                    )
+                )
 
                 uav_gen.generate_tiles()
 
@@ -283,27 +412,25 @@ def main():
     for d_conf in DATA_CONFIG:
         region_name = d_conf["region_name"]
         csv_path = all_csv_paths_one_to_one[region_name]
-        #todo if set is val then calculate place id for sat first.  
         is_val = d_conf["set_type"] == "val"
-        
+
         csv_output_path = get_processed_path(csv_path, d_conf["output_suffix"])
         generator = ManyToManyPlaceIdGenerator(
-                csv_tiles_path=csv_path,
-                csv_place_ids_output_path=csv_output_path,
-                force_regenerate=config.force_regenerate_place_ids,
-                is_validation_set=is_val,
-                is_validation_set_v2=d_conf.get("val_variant") == "v2",
-                # radius_neighbors_meters=70,
-                radius_neighbors_meters=70 if is_val else d_conf['crop_range_meters'],
-                tiles_trash_directory = config.DATAFRAMES_TILES_TRASH
+            csv_tiles_path=csv_path,
+            csv_place_ids_output_path=csv_output_path,
+            force_regenerate=config.force_regenerate_place_ids,
+            is_validation_set=is_val,
+            is_validation_set_v2=d_conf.get("val_variant") == "v2",
+            radius_neighbors_meters=70 if is_val else d_conf["crop_range_meters"],
+            tiles_trash_directory=config.DATAFRAMES_TILES_TRASH,
         )
-        
+
         generator.generate_place_ids()
 
     # --- Prepare Data for Model Training ---
     train_csvs: List[str] = []
     val_csvs: List[str] = []
-    
+
     for d in DATA_CONFIG:
         base_path = str(config.DATAFRAMES_ONE_TO_ONE_DIR / f"{d['region_name']}.csv")
         final_path = get_processed_path(base_path, d["output_suffix"])
@@ -316,116 +443,183 @@ def main():
     print(f"Train CSVs count: {len(train_csvs)}")
     print(f"Val CSVs count: {len(val_csvs)}")
 
-    datamodule = MapsDataModule(  # As requested, this part is kept as is
-        tiles_csv_file_paths=train_csvs, batch_size=32, val_set_names=val_csvs
-    )
-
-    model = VPRModel(
-        # ---- Encoder
-        backbone_arch="resnet50",
-        backbone_config={
-            "pretrained": True,
-            "layers_to_freeze": 2,
+    EXPERIMENTS = [
+        {
+            "name": "EXP-020_triplet_all_loss07_miner05_swapFalse",
+            "seed": 42,
+            "max_epochs": 40,
+            "T_max": 35,
+            "loss_name": "TripletMarginLoss",
+            "miner_name": "TripletMarginMiner",
+            "loss_margin": 0.07,
+            "miner_margin": 0.05,
+            "type_of_triplets": "all",
+            "swap": False,
+            "smooth_loss": False,
         },
-        agg_arch="gem",
-        agg_config={
-            "p": 3,
-            "eps": 1e-6
+        {
+            "name": "EXP-021_triplet_all_loss07_miner05_swapTrue",
+            "seed": 42,
+            "max_epochs": 40,
+            "T_max": 35,
+            "loss_name": "TripletMarginLoss",
+            "miner_name": "TripletMarginMiner",
+            "loss_margin": 0.07,
+            "miner_margin": 0.05,
+            "type_of_triplets": "all",
+            "swap": True,
+            "smooth_loss": False,
         },
-        lr=1e-4,
-        optimizer="adamw",
-        weight_decay=1e-4,  # 0.001 for sgd and 0 for adam,
-        momentum=0.9,
-        lr_sched="cosine",
-        lr_sched_args={
-            "T_max": 35
+        {
+            "name": "EXP-022_triplet_all_loss05_miner07_swapFalse",
+            "seed": 42,
+            "max_epochs": 40,
+            "T_max": 35,
+            "loss_name": "TripletMarginLoss",
+            "miner_name": "TripletMarginMiner",
+            "loss_margin": 0.05,
+            "miner_margin": 0.07,
+            "type_of_triplets": "all",
+            "swap": False,
+            "smooth_loss": False,
         },
+                {
+            "name": "EXP-023_msloss_msmine_eps010",
+            "seed": 42,
+            "max_epochs": 40,
+            "T_max": 35,
+            "loss_name": "MultiSimilarityLoss",
+            "miner_name": "MultiSimilarityMiner",
+            "miner_margin": 0.10,   # epsilon for MSMiner
+            "ms_alpha": 1.0,
+            "ms_beta": 50.0,
+            "ms_base": 0.0,
+        },
+    ]
 
-        # lr_sched="multistep",
-        # lr_sched_args={
-        #     "milestones": [20, 45],
-        #     "gamma": 0.1
-        # },
+    logs_root = Path("./logs").resolve()
+    logs_root.mkdir(parents=True, exist_ok=True)
 
-        # ----- Loss functions
-        # example: ContrastiveLoss, TripletMarginLoss, MultiSimilarityLoss,
-        # FastAPLoss, CircleLoss, SupConLoss,
-        loss_name="TripletMarginLoss",
-        miner_name="TripletMarginMiner",  # example: TripletMarginMiner, MultiSimilarityMiner, PairMarginMiner
-        miner_margin=0.03,
-        faiss_gpu=False,
-    )
+    all_summary_rows = []
 
-    # model params saving using Pytorch Lightning
-    # we save the best 3 models accoring to Recall@1 on pittsburg val
+    for exp in EXPERIMENTS:
+        print("\n" + "=" * 100)
+        print(f"STARTING EXPERIMENT: {exp['name']}")
+        print("=" * 100)
 
-    # TODO thats bad model check set, refactor it
-    checkpoint_cb = pl.callbacks.ModelCheckpoint(
-        monitor="Shandan-v1_one_to_one/R1",
-        filename=f"{model.encoder_arch}" + "_v1_({epoch:02d})_R1[{Shandan-v1_one_to_one/R1:.4f}]",
-        auto_insert_metric_name=False,
-        save_weights_only=True,
-        save_top_k=3,
-        save_last=True,
-        mode="max",
-    )
+        pl.seed_everything(exp["seed"], workers=True)
 
-    # TODO thats bad model check set, refactor it
-    checkpoint_cb_v2 = pl.callbacks.ModelCheckpoint(
-        monitor="Shandan-v2_one_to_one/R1",
-        filename=f"{model.encoder_arch}" + "_v2_({epoch:02d})_R1[{Shandan-v2_one_to_one/R1:.4f}]",
-        auto_insert_metric_name=False,
-        save_weights_only=True,
-        save_top_k=3,
-        save_last=False,
-        mode="max",
-    )
-    checkpoint_cb_ch23 = pl.callbacks.ModelCheckpoint(
-        monitor="Changjiang-23-v1_one_to_one/R1",
-        filename=f"{model.encoder_arch}" + "_v1_({epoch:02d})_R1[{Changjiang-23-v1_one_to_one/R1:.4f}]",
-        auto_insert_metric_name=False,
-        save_weights_only=True,
-        save_top_k=3,
-        save_last=False,
-        mode="max",
-    )
-    checkpoint_cb_v2_ch23 = pl.callbacks.ModelCheckpoint(
-        monitor="Changjiang-23-v2_one_to_one/R1",
-        filename=f"{model.encoder_arch}" + "_v2_({epoch:02d})_R1[{Changjiang-23-v2_one_to_one/R1:.4f}]",
-        auto_insert_metric_name=False,
-        save_weights_only=True,
-        save_top_k=3,
-        save_last=False,
-        mode="max",
-    )
+        run_dir = (logs_root / exp["name"]).resolve()
+        run_dir.mkdir(parents=True, exist_ok=True)
 
-    trainer = pl.Trainer(
-        accelerator="gpu",
-        devices=1,
-        default_root_dir=f"./logs/",  # Tensorflow can be used to viz
-        num_nodes=1,
-        num_sanity_val_steps=0,  # runs a validation step before stating training
-        precision="16-mixed",  # we use half precision to reduce  memory usage
-        max_epochs=80,
-        check_val_every_n_epoch=1,  # run validation every epoch
-        callbacks=[
-            checkpoint_cb,
-            checkpoint_cb_v2,
-            checkpoint_cb_ch23,
-            checkpoint_cb_v2_ch23
-        ],  # we only run the checkpointing callback (you can add more)
-        reload_dataloaders_every_n_epochs=1,  # we reload the dataset to shuffle the order
-        log_every_n_steps=10,
-        gradient_clip_algorithm="norm",
-        gradient_clip_val=1.0,
-    )
+        with open(run_dir / "experiment_config.json", "w") as f:
+            json.dump(exp, f, indent=2)
 
-    # we call the trainer, we give it the model and the datamodule
-    trainer.fit(model=model, datamodule=datamodule)
+        datamodule = MapsDataModule(
+            tiles_csv_file_paths=train_csvs,
+            batch_size=32,
+            val_set_names=val_csvs,
+        )
 
-    FULL_MODEL_PATH = "full_model.pth"
-    torch.save(model.state_dict(), FULL_MODEL_PATH)
-    print(f"Saved model state_dict to: {FULL_MODEL_PATH}")
+        model = VPRModel(
+            backbone_arch="resnet50",
+            backbone_config={
+                "pretrained": True,
+                "layers_to_freeze": 2,
+            },
+            agg_arch="gem",
+            agg_config={
+                "p": 3,
+                "eps": 1e-6
+            },
+            lr=1e-4,
+            optimizer="adamw",
+            weight_decay=1e-4,
+            momentum=0.9,
+            lr_sched="cosine",
+            lr_sched_args={
+                "T_max": exp["T_max"]
+            },
+            loss_name=exp["loss_name"],
+            miner_name=exp["miner_name"],
+            miner_margin=exp["miner_margin"],
+            faiss_gpu=False,
+        )
+
+        model = override_metric_learning_objects(model, exp)
+
+        callbacks, cb_map = build_callbacks(run_dir)
+
+        old_cwd = os.getcwd()
+        os.chdir(run_dir)
+        trainer = None
+
+        try:
+            trainer = pl.Trainer(
+                accelerator="gpu",
+                devices=1,
+                default_root_dir=".",
+                num_nodes=1,
+                num_sanity_val_steps=0,
+                precision="16-mixed",
+                max_epochs=exp["max_epochs"],
+                check_val_every_n_epoch=1,
+                callbacks=callbacks,
+                reload_dataloaders_every_n_epochs=1,
+                log_every_n_steps=10,
+                gradient_clip_algorithm="norm",
+                gradient_clip_val=1.0,
+            )
+
+            trainer.fit(model=model, datamodule=datamodule)
+
+            full_model_path = run_dir / "full_model_final.pth"
+            torch.save(model.state_dict(), full_model_path)
+            print(f"Saved final model state_dict to: {full_model_path}")
+
+        finally:
+            os.chdir(old_cwd)
+
+        summary_row = {
+            "experiment": exp["name"],
+            "seed": exp["seed"],
+            "max_epochs": exp["max_epochs"],
+            "T_max": exp["T_max"],
+            "loss_name": exp["loss_name"],
+            "miner_name": exp["miner_name"],
+            "loss_margin": exp.get("loss_margin"),
+            "miner_margin": exp.get("miner_margin"),
+            "type_of_triplets": exp.get("type_of_triplets"),
+            "swap": exp.get("swap"),
+            "smooth_loss": exp.get("smooth_loss"),
+            "ms_alpha": exp.get("ms_alpha"),
+            "ms_beta": exp.get("ms_beta"),
+            "ms_base": exp.get("ms_base"),
+            "best_mean_score": score_to_float(cb_map["mean"].best_model_score),
+            "best_mean_path": cb_map["mean"].best_model_path,
+            "best_min_score": score_to_float(cb_map["min"].best_model_score),
+            "best_min_path": cb_map["min"].best_model_path,
+            "best_shandan_v1_score": score_to_float(cb_map["shandan_v1"].best_model_score),
+            "best_shandan_v1_path": cb_map["shandan_v1"].best_model_path,
+            "best_changjiang_v1_score": score_to_float(cb_map["changjiang_v1"].best_model_score),
+            "best_changjiang_v1_path": cb_map["changjiang_v1"].best_model_path,
+            "final_model_path": str(run_dir / "full_model_final.pth"),
+        }
+
+        all_summary_rows.append(summary_row)
+        pd.DataFrame(all_summary_rows).to_csv(logs_root / "screening_summary.csv", index=False)
+
+        print("FINISHED EXPERIMENT:")
+        print(summary_row)
+
+        del trainer
+        del model
+        del datamodule
+        torch.cuda.empty_cache()
+        gc.collect()
+
+    print("\nAll experiments finished.")
+    print(f"Summary saved to: {logs_root / 'screening_summary.csv'}")
 
 
 if __name__ == "__main__":
