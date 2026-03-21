@@ -99,8 +99,7 @@ def get_processed_path(base_path: str, suffix: str) -> str:
 
 def override_metric_learning_objects(model, exp_cfg):
     """
-    Nadpisuje loss i miner po inicjalizacji modelu,
-    żeby nie trzeba było teraz przerabiać utils.get_loss/get_miner.
+    Code smell to do not refactor utils.get_loss/get_miner.
     """
     loss_name = exp_cfg["loss_name"]
     miner_name = exp_cfg["miner_name"]
@@ -121,6 +120,13 @@ def override_metric_learning_objects(model, exp_cfg):
             alpha=exp_cfg.get("ms_alpha", 1.0),
             beta=exp_cfg.get("ms_beta", 50.0),
             base=exp_cfg.get("ms_base", 0.0),
+            distance=CosineSimilarity(),
+        )
+
+    elif loss_name == "ContrastiveLoss":
+        model.loss_fn = losses.ContrastiveLoss(
+            pos_margin=exp_cfg.get("pos_margin", 0.8),
+            neg_margin=exp_cfg.get("neg_margin", 0.5),
             distance=CosineSimilarity(),
         )
 
@@ -445,20 +451,31 @@ def main():
 
     EXPERIMENTS = [
         {
-            "name": "EXP-020_triplet_all_loss07_miner05_swapFalse",
+            "name": "EXP-024_rewind_013_triplet_all_loss05_miner05_swapFalse",
             "seed": 42,
             "max_epochs": 40,
             "T_max": 35,
             "loss_name": "TripletMarginLoss",
             "miner_name": "TripletMarginMiner",
-            "loss_margin": 0.07,
+            "loss_margin": 0.05,
             "miner_margin": 0.05,
             "type_of_triplets": "all",
             "swap": False,
             "smooth_loss": False,
         },
         {
-            "name": "EXP-021_triplet_all_loss07_miner05_swapTrue",
+            "name": "EXP-025_rewind_013_Contrastive_pos08_neg05_MSMiner_eps01",
+            "seed": 42,
+            "max_epochs": 40,
+            "T_max": 35,
+            "loss_name": "ContrastiveLoss",
+            "miner_name": "MultiSimilarityMiner",
+            "pos_margin": 0.8,
+            "neg_margin": 0.5,
+            "miner_margin": 0.1, 
+        },
+        {
+            "name": "EXP-026_rewind_021_triplet_all_loss07_miner05_swapTrue",
             "seed": 42,
             "max_epochs": 40,
             "T_max": 35,
@@ -469,31 +486,6 @@ def main():
             "type_of_triplets": "all",
             "swap": True,
             "smooth_loss": False,
-        },
-        {
-            "name": "EXP-022_triplet_all_loss05_miner07_swapFalse",
-            "seed": 42,
-            "max_epochs": 40,
-            "T_max": 35,
-            "loss_name": "TripletMarginLoss",
-            "miner_name": "TripletMarginMiner",
-            "loss_margin": 0.05,
-            "miner_margin": 0.07,
-            "type_of_triplets": "all",
-            "swap": False,
-            "smooth_loss": False,
-        },
-                {
-            "name": "EXP-023_msloss_msmine_eps010",
-            "seed": 42,
-            "max_epochs": 40,
-            "T_max": 35,
-            "loss_name": "MultiSimilarityLoss",
-            "miner_name": "MultiSimilarityMiner",
-            "miner_margin": 0.10,   # epsilon for MSMiner
-            "ms_alpha": 1.0,
-            "ms_beta": 50.0,
-            "ms_base": 0.0,
         },
     ]
 
@@ -588,6 +580,8 @@ def main():
             "loss_name": exp["loss_name"],
             "miner_name": exp["miner_name"],
             "loss_margin": exp.get("loss_margin"),
+            "pos_margin": exp.get("pos_margin"),
+            "neg_margin": exp.get("neg_margin"),
             "miner_margin": exp.get("miner_margin"),
             "type_of_triplets": exp.get("type_of_triplets"),
             "swap": exp.get("swap"),
