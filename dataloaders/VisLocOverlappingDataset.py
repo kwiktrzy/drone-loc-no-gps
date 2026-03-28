@@ -46,7 +46,6 @@ class VisLocOverlappingDataset(Dataset):
 
     def __getitem__(self, index):
 
-        # TODO LZ: THERE WE HAVE PICTURE INDEXES!
         place_id = self.places_ids[index]
         places = self.dataframe[self.dataframe.index == place_id]
         images = []

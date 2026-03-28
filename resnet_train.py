@@ -101,8 +101,11 @@ def override_metric_learning_objects(model, exp_cfg):
     """
     Code smell to do not refactor utils.get_loss/get_miner.
     """
+    from pytorch_metric_learning import losses, miners
+    from pytorch_metric_learning.distances import CosineSimilarity
+
     loss_name = exp_cfg["loss_name"]
-    miner_name = exp_cfg["miner_name"]
+    miner_name = exp_cfg.get("miner_name") 
 
     # --------------------------
     # LOSS
@@ -128,6 +131,11 @@ def override_metric_learning_objects(model, exp_cfg):
             pos_margin=exp_cfg.get("pos_margin", 0.8),
             neg_margin=exp_cfg.get("neg_margin", 0.5),
             distance=CosineSimilarity(),
+        )
+        
+    elif loss_name == "SupConLoss":
+        model.loss_fn = losses.SupConLoss(
+            temperature=exp_cfg.get("supcon_temperature", 0.07)
         )
 
     else:
@@ -155,22 +163,7 @@ def override_metric_learning_objects(model, exp_cfg):
     else:
         raise NotImplementedError(f"Override not implemented for miner: {miner_name}")
 
-    print("=== OVERRIDDEN OBJECTS ===")
-    print("LOSS:", model.loss_fn)
-    print("MINER:", model.miner)
-
-    if hasattr(model.loss_fn, "distance") and model.loss_fn.distance is not None:
-        print("LOSS DIST:", type(model.loss_fn.distance), "inv:", model.loss_fn.distance.is_inverted)
-    else:
-        print("LOSS DIST: None")
-
-    if model.miner is not None and hasattr(model.miner, "distance") and model.miner.distance is not None:
-        print("MINER DIST:", type(model.miner.distance), "inv:", model.miner.distance.is_inverted)
-    else:
-        print("MINER: None")
-
     return model
-
 
 def build_callbacks(run_dir: Path):
     ckpt_dir = run_dir / "checkpoints"
@@ -219,6 +212,14 @@ def build_callbacks(run_dir: Path):
         save_last=False,
         mode="max",
     )
+
+    # early_stop_mean = pl.callbacks.EarlyStopping(
+    #     monitor="val_mean_R1_4sets",
+    #     mode="max",
+    #     patience=12,
+    #     min_delta=0.001,
+    #     verbose=True,
+    # )
 
     callbacks = [
         checkpoint_mean,
@@ -450,43 +451,104 @@ def main():
     print(f"Val CSVs count: {len(val_csvs)}")
 
     EXPERIMENTS = [
-        {
-            "name": "EXP-024_rewind_013_triplet_all_loss05_miner05_swapFalse",
-            "seed": 42,
-            "max_epochs": 40,
-            "T_max": 35,
-            "loss_name": "TripletMarginLoss",
-            "miner_name": "TripletMarginMiner",
-            "loss_margin": 0.05,
-            "miner_margin": 0.05,
-            "type_of_triplets": "all",
-            "swap": False,
-            "smooth_loss": False,
-        },
-        {
-            "name": "EXP-025_rewind_013_Contrastive_pos08_neg05_MSMiner_eps01",
-            "seed": 42,
-            "max_epochs": 40,
-            "T_max": 35,
-            "loss_name": "ContrastiveLoss",
-            "miner_name": "MultiSimilarityMiner",
-            "pos_margin": 0.8,
-            "neg_margin": 0.5,
-            "miner_margin": 0.1, 
-        },
-        {
-            "name": "EXP-026_rewind_021_triplet_all_loss07_miner05_swapTrue",
-            "seed": 42,
-            "max_epochs": 40,
-            "T_max": 35,
-            "loss_name": "TripletMarginLoss",
-            "miner_name": "TripletMarginMiner",
-            "loss_margin": 0.07,
-            "miner_margin": 0.05,
-            "type_of_triplets": "all",
-            "swap": True,
-            "smooth_loss": False,
-        },
+    {
+        "name": "EXP-048_GeM_tripletall_bs32_SGDR_T0e8_Tmult2_etaMin2e5",
+        "seed": 42,
+        "max_epochs": 40,
+        "T_max": 35,
+        "loss_name": "TripletMarginLoss",
+        "miner_name": "TripletMarginMiner",
+        "loss_margin": 0.05,
+        "miner_margin": 0.05,
+        "type_of_triplets": "all",
+        "swap": False,
+        "smooth_loss": False,
+        "agg_arch": "GeM",
+        "agg_config": {
+            "p": 3,
+            "eps": 1e-6
+        }
+    }
+    # {
+    #     "name": "EXP-042_ConvAP_out128_s4x4_tripletall",
+    #     "seed": 42,
+    #     "max_epochs": 40,
+    #     "T_max": 35,
+    #     "loss_name": "TripletMarginLoss",
+    #     "miner_name": "TripletMarginMiner",
+    #     "loss_margin": 0.05,
+    #     "miner_margin": 0.05,
+    #     "type_of_triplets": "all",
+    #     "swap": False,
+    #     "smooth_loss": False,
+    #     "agg_arch": "ConvAP",
+    #     "agg_config": {
+    #         "in_channels": 2048,
+    #         "out_channels": 128,
+    #         "s1": 4,
+    #         "s2": 4
+    #     }
+    # },
+    # {
+    #     "name": "EXP-043_ConvAP_out228_s3x3_tripletall",
+    #     "seed": 42,
+    #     "max_epochs": 40,
+    #     "T_max": 35,
+    #     "loss_name": "TripletMarginLoss",
+    #     "miner_name": "TripletMarginMiner",
+    #     "loss_margin": 0.05,
+    #     "miner_margin": 0.05,
+    #     "type_of_triplets": "all",
+    #     "swap": False,
+    #     "smooth_loss": False,
+    #     "agg_arch": "ConvAP",
+    #     "agg_config": {
+    #         "in_channels": 2048,
+    #         "out_channels": 228,
+    #         "s1": 3,
+    #         "s2": 3
+    #     }
+    # },
+    # {
+    #     "name": "EXP-044_ConvAP_out42_s7x7_tripletall",
+    #     "seed": 42,
+    #     "max_epochs": 40,
+    #     "T_max": 35,
+    #     "loss_name": "TripletMarginLoss",
+    #     "miner_name": "TripletMarginMiner",
+    #     "loss_margin": 0.05,
+    #     "miner_margin": 0.05,
+    #     "type_of_triplets": "all",
+    #     "swap": False,
+    #     "smooth_loss": False,
+    #     "agg_arch": "ConvAP",
+    #     "agg_config": {
+    #         "in_channels": 2048,
+    #         "out_channels": 42,
+    #         "s1": 7,
+    #         "s2": 7
+    #     }
+    # },
+    # {
+    #     "name": "EXP-045_ConvAP_out82_s5x5_tripletall",
+    #     "seed": 42,
+    #     "max_epochs": 40,
+    #     "T_max": 35,
+    #     "loss_name": "TripletMarginLoss",
+    #     "miner_name": "TripletMarginMiner",
+    #     "loss_margin": 0.05,
+    #     "miner_margin": 0.05,
+    #     "type_of_triplets": "all",
+    #     "swap": False,
+    #     "smooth_loss": False,
+    #     "agg_arch": "ConvAP",
+    #     "agg_config": {
+    #         "in_channels": 2048,
+    #         "out_channels": 82,
+    #         "s1": 5,
+    #         "s2": 5
+    #     }
+    # }
     ]
 
     logs_root = Path("./logs").resolve()
@@ -511,7 +573,11 @@ def main():
             tiles_csv_file_paths=train_csvs,
             batch_size=32,
             val_set_names=val_csvs,
+            shuffle_all=True
         )
+
+        current_agg_arch = exp.get("agg_arch", "gem")
+        current_agg_config = exp.get("agg_config", {"p": 3, "eps": 1e-6})
 
         model = VPRModel(
             backbone_arch="resnet50",
@@ -519,22 +585,25 @@ def main():
                 "pretrained": True,
                 "layers_to_freeze": 2,
             },
-            agg_arch="gem",
-            agg_config={
-                "p": 3,
-                "eps": 1e-6
-            },
+            agg_arch=current_agg_arch,
+            agg_config=current_agg_config,
             lr=1e-4,
             optimizer="adamw",
             weight_decay=1e-4,
             momentum=0.9,
-            lr_sched="cosine",
+            lr_sched="cosine_warm_restarts",
             lr_sched_args={
-                "T_max": exp["T_max"]
+                "T_0_epochs": 8,
+                "T_mult": 2,
+                "eta_min": 2e-5
             },
+            # lr_sched="cosine",
+            # lr_sched_args={
+            #     "T_max": exp["T_max"]
+            # },
             loss_name=exp["loss_name"],
-            miner_name=exp["miner_name"],
-            miner_margin=exp["miner_margin"],
+            miner_name=exp.get("miner_name"),        
+            miner_margin=exp.get("miner_margin", 0.1),
             faiss_gpu=False,
         )
 
@@ -553,7 +622,7 @@ def main():
                 default_root_dir=".",
                 num_nodes=1,
                 num_sanity_val_steps=0,
-                precision="16-mixed",
+                precision="32",
                 max_epochs=exp["max_epochs"],
                 check_val_every_n_epoch=1,
                 callbacks=callbacks,
@@ -572,13 +641,18 @@ def main():
         finally:
             os.chdir(old_cwd)
 
+        # Wyłuskujemy atrybuty specyficzne dla ConvAP
+        convap_out = current_agg_config.get("out_channels") if current_agg_arch == "ConvAP" else None
+        convap_s1 = current_agg_config.get("s1") if current_agg_arch == "ConvAP" else None
+        convap_s2 = current_agg_config.get("s2") if current_agg_arch == "ConvAP" else None
+
         summary_row = {
             "experiment": exp["name"],
             "seed": exp["seed"],
             "max_epochs": exp["max_epochs"],
             "T_max": exp["T_max"],
             "loss_name": exp["loss_name"],
-            "miner_name": exp["miner_name"],
+            "miner_name": exp.get("miner_name"),
             "loss_margin": exp.get("loss_margin"),
             "pos_margin": exp.get("pos_margin"),
             "neg_margin": exp.get("neg_margin"),
@@ -589,6 +663,11 @@ def main():
             "ms_alpha": exp.get("ms_alpha"),
             "ms_beta": exp.get("ms_beta"),
             "ms_base": exp.get("ms_base"),
+            "supcon_temperature": exp.get("supcon_temperature"),
+            "agg_arch": current_agg_arch,
+            "convap_out_channels": convap_out,
+            "convap_s1": convap_s1,
+            "convap_s2": convap_s2,
             "best_mean_score": score_to_float(cb_map["mean"].best_model_score),
             "best_mean_path": cb_map["mean"].best_model_path,
             "best_min_score": score_to_float(cb_map["min"].best_model_score),

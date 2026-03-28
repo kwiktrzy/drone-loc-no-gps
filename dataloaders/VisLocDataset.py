@@ -58,6 +58,7 @@ class VisLocDataset(Dataset):
             print(f"Image {path} could not be loaded")
             return PIL.Image.new("RGB", (224, 224))
 
+    # URGENT: batch size == places!! so if batch size = 64 and image_per_place = 4 then = 256 batch size! 
     def __getitem__(self, index):
         place_id = self.places_ids[index]
         places = self.dataframe[self.dataframe.index == place_id]

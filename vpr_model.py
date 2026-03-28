@@ -1,4 +1,5 @@
 import os
+import math
 import pytorch_lightning as pl
 import torch
 import pandas as pd
@@ -91,6 +92,8 @@ class VPRModel(pl.LightningModule):
         self.is_loss_debug = True
         self.is_return_attention = True
 
+        self._shape_debug_printed = False
+
         self.debug_config = {
             "min_epoch": 35,
             "loss_threshold": 0.043,
@@ -98,19 +101,50 @@ class VPRModel(pl.LightningModule):
             "save_attention": True,
             "save_triplet_images": True,
         }
-        print("LOSS DIST:", type(self.loss_fn.distance), "inv:", self.loss_fn.distance.is_inverted)
-        print("MINER DIST:", type(self.miner.distance), "inv:", self.miner.distance.is_inverted)
+        if hasattr(self.loss_fn, "distance") and self.loss_fn.distance is not None:
+            print("LOSS DIST:", type(self.loss_fn.distance), "inv:", getattr(self.loss_fn.distance, "is_inverted", "Unknown"))
+        else:
+            print("LOSS DIST: NO DISTANCE")
+
+        if self.miner is not None and hasattr(self.miner, "distance") and self.miner.distance is not None:
+            print("MINER DIST:", type(self.miner.distance), "inv:", getattr(self.miner.distance, "is_inverted", "Unknown"))
+        else:
+            print("MINER DIST: NO MINER")
 
     # the forward pass of the lightning model
+    # def forward(self, x):
+    #     x = self.backbone(x)
+    #     x, attn_map = self.aggregator(x)
+    #     if self.is_return_attention:
+    #         return x, attn_map
+    #     return x
+
     def forward(self, x):
+        do_print = (not self._shape_debug_printed)
+
+        if do_print:
+            print("training mode:", self.training)
+            print("input shape:", x.shape)
+
         x = self.backbone(x)
+
+        if do_print:
+            print("backbone feat shape:", x.shape)
+
         x, attn_map = self.aggregator(x)
+
+        if do_print:
+            print("agg output shape:", x.shape)
+            print("attn_map shape:", attn_map.shape)
+            self._shape_debug_printed = True
+
         if self.is_return_attention:
             return x, attn_map
         return x
 
     # configure the optimizer
     def configure_optimizers(self):
+
         if self.optimizer.lower() == "sgd":
             optimizer = torch.optim.SGD(
                 self.parameters(),
@@ -123,7 +157,7 @@ class VPRModel(pl.LightningModule):
                 self.parameters(), lr=self.lr, weight_decay=self.weight_decay
             )
         else:
-            raise ValueError(f'Optimizer {self.optimizer} not found')
+            raise ValueError(f"Optimizer {self.optimizer} not found")
 
         if self.lr_sched.lower() == "multistep":
             scheduler = lr_scheduler.MultiStepLR(
@@ -131,13 +165,28 @@ class VPRModel(pl.LightningModule):
                 milestones=self.lr_sched_args["milestones"],
                 gamma=self.lr_sched_args["gamma"],
             )
-            return [optimizer], [scheduler]
+            return {
+                "optimizer": optimizer,
+                "lr_scheduler": {
+                    "scheduler": scheduler,
+                    "interval": "epoch",
+                    "frequency": 1,
+                },
+            }
 
         elif self.lr_sched.lower() == "cosine":
             scheduler = lr_scheduler.CosineAnnealingLR(
-                optimizer, self.lr_sched_args["T_max"]
+                optimizer,
+                T_max=self.lr_sched_args["T_max"],
             )
-            return [optimizer], [scheduler]
+            return {
+                "optimizer": optimizer,
+                "lr_scheduler": {
+                    "scheduler": scheduler,
+                    "interval": "epoch",
+                    "frequency": 1,
+                },
+            }
 
         elif self.lr_sched.lower() == "linear":
             scheduler = lr_scheduler.LinearLR(
@@ -146,7 +195,79 @@ class VPRModel(pl.LightningModule):
                 end_factor=self.lr_sched_args["end_factor"],
                 total_iters=self.lr_sched_args["total_iters"],
             )
-            return [optimizer], [{"scheduler": scheduler, "interval": "step"}]
+            return {
+                "optimizer": optimizer,
+                "lr_scheduler": {
+                    "scheduler": scheduler,
+                    "interval": "step",
+                    "frequency": 1,
+                },
+            }
+
+        elif self.lr_sched.lower() == "cosine_step_eta_min":
+            total_steps = self._get_total_steps()
+            eta_min = float(self.lr_sched_args.get("eta_min", 0.0))
+
+            scheduler = lr_scheduler.CosineAnnealingLR(
+                optimizer,
+                T_max=total_steps,
+                eta_min=eta_min,
+            )
+
+            return {
+                "optimizer": optimizer,
+                "lr_scheduler": {
+                    "scheduler": scheduler,
+                    "interval": "step",
+                    "frequency": 1,
+                },
+            }
+
+        elif self.lr_sched.lower() in ["cosine_warm_restarts", "sgdr"]:
+            steps_per_epoch = self._get_steps_per_epoch()
+
+            T_0_epochs = int(self.lr_sched_args["T_0_epochs"])
+            T_mult = int(self.lr_sched_args.get("T_mult", 2))
+            eta_min = float(self.lr_sched_args.get("eta_min", 0.0))
+
+            T_0_steps = max(1, T_0_epochs * steps_per_epoch)
+
+            scheduler = lr_scheduler.CosineAnnealingWarmRestarts(
+                optimizer,
+                T_0=T_0_steps,
+                T_mult=T_mult,
+                eta_min=eta_min,
+            )
+
+            return {
+                "optimizer": optimizer,
+                "lr_scheduler": {
+                    "scheduler": scheduler,
+                    "interval": "step",
+                    "frequency": 1,
+                },
+            }
+
+        else:
+            raise ValueError(f"LR scheduler {self.lr_sched} not found")
+
+    def _get_total_steps(self):
+        if "total_steps" in self.lr_sched_args:
+            return int(self.lr_sched_args["total_steps"])
+
+        if self.trainer is None:
+            raise RuntimeError("Trainer is not attached yet; cannot infer total_steps.")
+
+        return int(self.trainer.estimated_stepping_batches)
+
+    
+    def _get_steps_per_epoch(self):
+        total_steps = self._get_total_steps()
+
+        if self.trainer is None or self.trainer.max_epochs is None:
+            raise RuntimeError("Trainer or max_epochs unavailable; cannot infer steps_per_epoch.")
+
+        return max(1, math.ceil(total_steps / int(self.trainer.max_epochs)))
 
     # configure the optizer step, takes into account the warmup stage
     def optimizer_step(self, epoch, batch_idx, optimizer, optimizer_closure):
@@ -346,6 +467,7 @@ class VPRModel(pl.LightningModule):
             short_val_name = Path(val_set_name).stem
             feats = torch.concat(val_step_outputs[i], dim=0)    
 
+            
             if "Shandan" in short_val_name:
                 num_references = len(val_dataset.db_image_paths)
                 positives = val_dataset.get_positives() 
