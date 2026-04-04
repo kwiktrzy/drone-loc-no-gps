@@ -247,6 +247,75 @@ class VPRModel(pl.LightningModule):
                     "frequency": 1,
                 },
             }
+        elif self.lr_sched.lower() == "cyclic":
+            #CyclicLR, which periodically re-increases LR to restore optimizer plasticity in a milder way than hard warm restarts.
+            # with smaller effective batches the miner remains active late in training, so a purely monotonic schedule tied to a preset horizon may reduce LR too early.
+            # We therefore prefer schedulers that react to observed progress or reintroduce controlled exploration.
+            steps_per_epoch = self._get_steps_per_epoch()
+
+            step_size_up = int(self.lr_sched_args["step_size_up_epochs"] * steps_per_epoch)
+            step_size_down = int(
+                self.lr_sched_args.get("step_size_down_epochs", self.lr_sched_args["step_size_up_epochs"])
+                * steps_per_epoch
+            )
+
+            scheduler = lr_scheduler.CyclicLR(
+                optimizer,
+                base_lr=self.lr_sched_args["base_lr"],
+                max_lr=self.lr_sched_args["max_lr"],
+                step_size_up=step_size_up,
+                step_size_down=step_size_down,
+                mode=self.lr_sched_args.get("mode", "triangular2"),
+                gamma=self.lr_sched_args.get("gamma", 1.0),
+                cycle_momentum=False,  # important for AdamW
+            )
+
+            return {
+                "optimizer": optimizer,
+                "lr_scheduler": {
+                    "scheduler": scheduler,
+                    "interval": "step",
+                    "frequency": 1,
+                },
+            }
+        elif self.lr_sched.lower() == "warmup_cosine":
+            import math
+            
+            total_steps = self._get_total_steps()
+            
+            # --- konfigurowalne parametry ---
+            warmup_fraction = float(self.lr_sched_args.get("warmup_fraction", 0.05))
+            eta_min_ratio   = float(self.lr_sched_args.get("eta_min_ratio", 0.01))
+            # --------------------------------
+            
+            warmup_steps = int(warmup_fraction * total_steps)
+            eta_min_ratio_val = eta_min_ratio  # np. 0.01 → eta_min = 0.01 * lr
+            
+            def lr_lambda(current_step):
+                if current_step < warmup_steps:
+                    # Liniowy warmup: od eta_min_ratio do 1.0
+                    return eta_min_ratio_val + (1.0 - eta_min_ratio_val) * (
+                        current_step / max(1, warmup_steps)
+                    )
+                else:
+                    # Cosine decay: od 1.0 do eta_min_ratio
+                    progress = (current_step - warmup_steps) / max(
+                        1, total_steps - warmup_steps
+                    )
+                    cosine_decay = 0.5 * (1.0 + math.cos(math.pi * progress))
+                    return eta_min_ratio_val + (1.0 - eta_min_ratio_val) * cosine_decay
+            
+            scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda)
+            
+            return {
+                "optimizer": optimizer,
+                "lr_scheduler": {
+                    "scheduler": scheduler,
+                    "interval": "step",
+                    "frequency": 1,
+                },
+            }
+        
 
         else:
             raise ValueError(f"LR scheduler {self.lr_sched} not found")
