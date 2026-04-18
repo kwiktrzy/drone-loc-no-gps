@@ -1,6 +1,10 @@
 import os
 import math
 import pytorch_lightning as pl
+import cv2
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 import torch
 import pandas as pd
 from torch.optim import lr_scheduler
@@ -72,8 +76,29 @@ class VPRModel(pl.LightningModule):
 
         self.save_hyperparameters()  # write hyperparams into a file
 
-        self.loss_fn = utils.get_loss(loss_name)
-        self.miner = utils.get_miner(miner_name, miner_margin)
+        # Build kwargs from hyperparameters so config values actually reach loss/miner
+        loss_kwargs = {
+            "margin": getattr(self, "loss_margin", None),
+            "pos_margin": getattr(self, "loss_margin", None),
+            "neg_margin": getattr(self, "loss_margin_neg", None),
+            "swap": getattr(self, "swap", None),
+            "smooth_loss": getattr(self, "smooth_loss", None),
+            "distance": getattr(self, "distance", None),
+        }
+        loss_kwargs = {k: v for k, v in loss_kwargs.items() if v is not None}
+        self.loss_fn = utils.get_loss(loss_name, **loss_kwargs)
+
+        miner_kwargs = {
+            "margin": getattr(self, "miner_margin", None),
+            "type_of_triplets": getattr(self, "type_of_triplets", None),
+            "epsilon": getattr(self, "miner_margin", None),
+            "pos_margin": getattr(self, "miner_margin", None),
+            "neg_margin": getattr(self, "miner_margin_neg", None),
+            "distance": getattr(self, "distance", None),
+        }
+        miner_kwargs = {k: v for k, v in miner_kwargs.items() if v is not None}
+        self.miner = utils.get_miner(miner_name, **miner_kwargs) if miner_name else None
+        
         self.batch_acc = (
             []
         )  # we will keep track of the % of trivial pairs/triplets at the loss level
@@ -110,6 +135,12 @@ class VPRModel(pl.LightningModule):
             print("MINER DIST:", type(self.miner.distance), "inv:", getattr(self.miner.distance, "is_inverted", "Unknown"))
         else:
             print("MINER DIST: NO MINER")
+
+        # ------------- AB TEST SUPPORT 
+        self.save_val_predictions = False
+        self.run_dir = None
+        self.val_metrics_log = []
+        # ----------------------------
 
     # the forward pass of the lightning model
     # def forward(self, x):
@@ -283,7 +314,6 @@ class VPRModel(pl.LightningModule):
             
             total_steps = self._get_total_steps()
             
-            # --- konfigurowalne parametry ---
             warmup_fraction = float(self.lr_sched_args.get("warmup_fraction", 0.05))
             eta_min_ratio   = float(self.lr_sched_args.get("eta_min_ratio", 0.01))
             # --------------------------------
@@ -293,12 +323,12 @@ class VPRModel(pl.LightningModule):
             
             def lr_lambda(current_step):
                 if current_step < warmup_steps:
-                    # Liniowy warmup: od eta_min_ratio do 1.0
+      
                     return eta_min_ratio_val + (1.0 - eta_min_ratio_val) * (
                         current_step / max(1, warmup_steps)
                     )
                 else:
-                    # Cosine decay: od 1.0 do eta_min_ratio
+
                     progress = (current_step - warmup_steps) / max(
                         1, total_steps - warmup_steps
                     )
@@ -487,8 +517,6 @@ class VPRModel(pl.LightningModule):
 
         if torch.isnan(descriptors).any():
             raise ValueError("NaNs in descriptors (val)")
-
-        # TUTAJ ZMIANA: Usunięto .mean(dim=1), zachowujemy kształt (BS * N, D)
         descriptors_cpu = descriptors.detach().cpu()
 
         idx_to_use = 0 if dataloader_idx is None else dataloader_idx
@@ -663,25 +691,75 @@ class VPRModel(pl.LightningModule):
             # ADDED: collect per-dataset R1 for aggregate metrics
             all_val_r1.append(float(pitts_dict[1])) 
 
-            del r_list, q_list, feats, num_references, positives    
 
-        # ADDED: aggregate metrics over all validation datasets
-        if len(all_val_r1) > 0:
-            mean_r1_4sets = float(np.mean(all_val_r1))
-            min_r1_4sets = float(np.min(all_val_r1))    
+            if self.run_dir is not None:
+                run_dir = Path(self.run_dir)
 
-            self.log("val_mean_R1_4sets", mean_r1_4sets, prog_bar=True, logger=True)
-            self.log("val_min_R1_4sets", min_r1_4sets, prog_bar=True, logger=True)  
 
-            print(
-                f"Aggregate metrics: val_mean_R1_4sets = {mean_r1_4sets:.4f}, "
-                f"val_min_R1_4sets = {min_r1_4sets:.4f}"
-            )   
+                if self.save_val_predictions:
+                    pred_file = run_dir / f"predictions_{short_val_name}.json"
+                    q_paths = [current_val_dataset.images[num_references + qi] for qi in range(len(q_list))]
 
-        print("\n\n")   
+                    pred_data = {
+                        "epoch": self.current_epoch,
+                        "dataset": short_val_name,
+                        "num_references": int(num_references),
+                        "queries": []
+                    }
+                    for qi in range(len(q_list)):
+                        top5 = predictions[qi][:5].tolist() if len(predictions[qi]) >= 5 else predictions[qi].tolist()
+                        top5_paths = [current_val_dataset.images[int(idx)] for idx in top5]
+                        pred_data["queries"].append({
+                            "query_idx": int(qi),
+                            "query_path": q_paths[qi],
+                            "top5_indices": top5,
+                            "top5_paths": top5_paths,
+                            "is_hit_r1": bool(top5[0] in positives[qi]) if len(top5) > 0 else False,
+                            "positives": positives[qi].tolist() if hasattr(positives[qi], 'tolist') else list(positives[qi])
+                        })
+                    with open(pred_file, 'w', encoding='utf-8') as f:
+                        json.dump(pred_data, f, indent=2)
 
-        # reset the outputs list
-        self.val_outputs = []
+                self.val_metrics_log.append({
+                    "epoch": self.current_epoch,
+                    "dataset": short_val_name,
+                    "R1": float(pitts_dict[1]),
+                    "R5": float(pitts_dict[5]),
+                    "R10": float(pitts_dict[10]),
+                })
+
+            # ADDED: aggregate metrics over all validation datasets
+            if len(all_val_r1) > 0:
+                mean_r1_4sets = float(np.mean(all_val_r1))
+                min_r1_4sets = float(np.min(all_val_r1))    
+
+                self.log("val_mean_R1_4sets", mean_r1_4sets, prog_bar=True, logger=True)
+                self.log("val_min_R1_4sets", min_r1_4sets, prog_bar=True, logger=True)  
+
+                print(
+                    f"Aggregate metrics: val_mean_R1_4sets = {mean_r1_4sets:.4f}, "
+                    f"val_min_R1_4sets = {min_r1_4sets:.4f}"
+                )   
+
+            print("\n\n")   
+
+            # reset the outputs list
+            self.val_outputs = []
+
+        if self.run_dir is not None and len(self.val_metrics_log) > 0:
+            metrics_file = Path(self.run_dir) / "val_metrics.jsonl"
+            epoch_entry = {
+                "epoch": self.current_epoch,
+                "val_mean_R1_4sets": float(np.mean(all_val_r1)) if len(all_val_r1) > 0 else None,
+                "val_min_R1_4sets": float(np.min(all_val_r1)) if len(all_val_r1) > 0 else None,
+                "datasets": {
+                    m["dataset"]: {"R1": m["R1"], "R5": m["R5"], "R10": m["R10"]}
+                    for m in self.val_metrics_log
+                }
+            }
+            with open(metrics_file, 'a', encoding='utf-8') as f:
+                f.write(json.dumps(epoch_entry) + "\n")
+            self.val_metrics_log = []
 
     def val_debug_results(
         self,
@@ -719,6 +797,91 @@ class VPRModel(pl.LightningModule):
                         f"  {rank+1}. {marker} Index: {db_idx} | Path: {pred_path}\n"
                     )
 
+
+    @torch.no_grad()
+    def extract_attention_maps(self, val_dataset, val_dataloader, device, output_dir, num_queries=3):
+        self.eval()
+        self.to(device)
+        os.makedirs(output_dir, exist_ok=True)
+        
+        num_refs = len(val_dataset.db_image_paths)
+        queries_processed = 0
+        
+        for batch in val_dataloader:
+            if queries_processed >= num_queries:
+                break
+                
+            places, indices = batch
+            if places.dim() == 5:
+                BS, N, ch, h, w = places.shape
+                images = places.view(BS * N, ch, h, w)
+                indices = indices.view(-1)
+            else:
+                images = places
+                
+            images = images.to(device)
+            
+            _, attn_maps = self(images)  # attn_maps: (B, H, W)
+            
+            for b in range(attn_maps.shape[0]):
+                if queries_processed >= num_queries:
+                    break
+                    
+                global_idx = indices[b].item()
+                if global_idx < num_refs:
+                    continue  # skip reference
+                    
+                # load original
+                img_path = val_dataset.images[global_idx]
+                try:
+                    orig = cv2.imread(str(img_path))
+                    orig = cv2.cvtColor(orig, cv2.COLOR_BGR2RGB)
+                except Exception:
+                    continue
+                
+                attn = attn_maps[b].cpu().numpy()
+                attn_resized = cv2.resize(attn, (orig.shape[1], orig.shape[0]))
+                a_min, a_max = attn_resized.min(), attn_resized.max()
+                attn_norm = (attn_resized - a_min) / (a_max - a_min + 1e-9)
+                
+                orig_path = Path(output_dir) / f"query{queries_processed}_orig.jpg"
+                cv2.imwrite(str(orig_path), cv2.cvtColor(orig, cv2.COLOR_RGB2BGR))
+                
+                heatmap_color = plt.cm.jet(attn_norm)[:, :, :3]
+                heatmap_color = (heatmap_color * 255).astype(np.uint8)
+                heatmap_path = Path(output_dir) / f"query{queries_processed}_heatmap.jpg"
+                cv2.imwrite(str(heatmap_path), cv2.cvtColor(heatmap_color, cv2.COLOR_RGB2BGR))
+                
+                overlay = cv2.addWeighted(orig, 0.6, heatmap_color, 0.4, 0)
+                overlay_path = Path(output_dir) / f"query{queries_processed}_overlay.jpg"
+                cv2.imwrite(str(overlay_path), cv2.cvtColor(overlay, cv2.COLOR_RGB2BGR))
+                
+                fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+                
+                axes[0].imshow(orig)
+                axes[0].set_title("Original UAV Query", fontsize=11, fontweight='bold')
+                axes[0].axis('off')
+                
+                axes[1].imshow(heatmap_color)
+                axes[1].set_title("Attention Heatmap\n(GeM Pooling)", fontsize=11, fontweight='bold')
+                axes[1].axis('off')
+                
+                axes[2].imshow(overlay)
+                axes[2].set_title("Overlay\n(60% image + 40% heatmap)", fontsize=11, fontweight='bold')
+                axes[2].axis('off')
+                
+                fig.suptitle(f"Attention Visualization | Query {queries_processed}", 
+                            fontsize=13, fontweight='bold', y=0.98)
+                plt.tight_layout()
+                comparison_path = Path(output_dir) / f"query{queries_processed}_comparison.png"
+                plt.savefig(comparison_path, dpi=150, bbox_inches='tight', facecolor='white')
+                plt.close()
+                
+                queries_processed += 1
+        
+        print(f"Saved {queries_processed} attention maps to {output_dir}")
+        return queries_processed
+    
     def debug_step(
         self,
         descriptors,

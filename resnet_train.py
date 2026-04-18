@@ -389,7 +389,7 @@ def main():
             "agg_config": {"p": 3, "eps": 1e-6},
             "lr_sched": "warmup_cosine",
             "lr_sched_args": {
-                "warmup_fraction": 0.05,   # 5% total steps = ~2-3 epoki
+                "warmup_fraction": 0.05,   # 5% total steps = ~2-3 epochs
                 "eta_min_ratio": 0.01,     # eta_min = 0.01 * 1e-4 = 1e-6
             },
         },
