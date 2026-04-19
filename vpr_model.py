@@ -2,6 +2,7 @@ import os
 import math
 import pytorch_lightning as pl
 import cv2
+import json
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -114,7 +115,7 @@ class VPRModel(pl.LightningModule):
         self.val_outputs = []
         # ----------------------------------
 
-        self.is_loss_debug = True
+        self.is_loss_debug = False
         self.is_return_attention = True
 
         self._shape_debug_printed = False
@@ -412,9 +413,9 @@ class VPRModel(pl.LightningModule):
                 self.log("mined_triplets", float(a.numel()), prog_bar=True, logger=True)
 
 
-            self.log_basic_mining_stats(descriptors, miner_outputs)
-            if domains is not None:
-                self.log_domain_aware_mining(descriptors, domains, miner_outputs)
+            # self.log_basic_mining_stats(descriptors, miner_outputs)
+            # if domains is not None:
+            #     self.log_domain_aware_mining(descriptors, domains, miner_outputs)
             
             loss = self.loss_fn(descriptors, labels, miner_outputs)
             # calculate the % of trivial pairs/triplets
@@ -443,6 +444,16 @@ class VPRModel(pl.LightningModule):
             prog_bar=True,
             logger=True,
         )
+        
+        if self.miner is not None and miner_outputs is not None:
+            dist = self.get_distance_obj(self.loss_fn, self.miner)
+            with torch.no_grad():
+                mat = dist(descriptors, descriptors).detach()
+            
+            self.log_basic_mining_stats(mat, miner_outputs)
+            if domains is not None:
+                self.log_domain_aware_mining(mat, domains, miner_outputs)
+
         if self.is_loss_debug:
             return loss, miner_outputs
         return loss
@@ -546,39 +557,27 @@ class VPRModel(pl.LightningModule):
         [R1, R2, ..., Rn, Q1, Q2, ...]
         """
         val_step_outputs = self.val_outputs 
-
         dm = self.trainer.datamodule    
 
-        # ADDED: aggregate R1 over all validation datasets
         all_val_r1 = [] 
-
-        # The following line is a hack: if we have only one validation set, then
-        # we need to put the outputs in a list (Pytorch Lightning does not do it presently)
-        # if len(dm.val_datasets) == 1:  # we need to put the outputs in a list
-        #     val_step_outputs = [val_step_outputs] 
 
         for i, (val_set_name, val_dataset) in enumerate(
             zip(dm.val_set_names, dm.val_datasets)
         ):  
-
             short_val_name = Path(val_set_name).stem
             feats = torch.concat(val_step_outputs[i], dim=0)    
 
-            
             if "Shandan" in short_val_name:
                 num_references = len(val_dataset.db_image_paths)
                 positives = val_dataset.get_positives() 
-
                 variant = (
                     "v1"
                     if "v1" in short_val_name
                     else ("v2" if "v2" in short_val_name else "base")
                 )   
-
                 print(f"\n Shandan ({variant}): {short_val_name}")
                 print(f" Queries: {len(positives)}")
                 print(f" References: {num_references}") 
-
                 cnts = np.array([len(p) for p in positives])
                 zero_pos = (cnts == 0).sum()
                 print(f" Q with 0 positives: {zero_pos} / {len(cnts)}")
@@ -590,17 +589,14 @@ class VPRModel(pl.LightningModule):
             elif "Changjiang-23" in short_val_name:
                 num_references = len(val_dataset.db_image_paths)
                 positives = val_dataset.get_positives() 
-
                 variant = (
                     "v1"
                     if "v1" in short_val_name
                     else ("v2" if "v2" in short_val_name else "base")
                 )   
-
                 print(f"\n Changjiang-23 ({variant}): {short_val_name}")
                 print(f" Queries: {len(positives)}")
                 print(f" References: {num_references}") 
-
                 cnts = np.array([len(p) for p in positives])
                 zero_pos = (cnts == 0).sum()
                 print(f" Q with 0 positives: {zero_pos} / {len(cnts)}")
@@ -614,10 +610,6 @@ class VPRModel(pl.LightningModule):
                 positives = val_dataset.get_positives()
                 print(f"Queries: {len(positives)}")
                 print(f"References: {num_references}")
-            # elif 'msls' in val_set_name:
-            #     # split to ref and queries
-            #     num_references = val_dataset.num_references
-            # positives = val_dataset.pIdx
             else:
                 print(f"Please implement validation_epoch_end for {val_set_name}")
                 raise NotImplemented    
@@ -644,7 +636,6 @@ class VPRModel(pl.LightningModule):
                 testing=True,
             )   
 
-            # ADDED: geo-debug for top1 misses
             geo_stats = self.compute_val_top1_geodist_stats(
                 val_dataset=val_dataset,
                 predictions=predictions,
@@ -659,7 +650,6 @@ class VPRModel(pl.LightningModule):
                         logger=True,
                     )
                 self.save_val_geo_stats(short_val_name, geo_stats)  
-
                 print(
                     f" Geo debug: valid_q={geo_stats['top1_geo_valid_queries']:.0f}, "
                     f"skip_zero_pos={geo_stats['top1_geo_skipped_zero_pos_queries']:.0f}, "
@@ -688,18 +678,13 @@ class VPRModel(pl.LightningModule):
                 f"{short_val_name}/R10", pitts_dict[10], prog_bar=False, logger=True
             )   
 
-            # ADDED: collect per-dataset R1 for aggregate metrics
             all_val_r1.append(float(pitts_dict[1])) 
-
 
             if self.run_dir is not None:
                 run_dir = Path(self.run_dir)
-
-
                 if self.save_val_predictions:
                     pred_file = run_dir / f"predictions_{short_val_name}.json"
-                    q_paths = [current_val_dataset.images[num_references + qi] for qi in range(len(q_list))]
-
+                    q_paths = [val_dataset.images[num_references + qi] for qi in range(len(q_list))]
                     pred_data = {
                         "epoch": self.current_epoch,
                         "dataset": short_val_name,
@@ -708,7 +693,7 @@ class VPRModel(pl.LightningModule):
                     }
                     for qi in range(len(q_list)):
                         top5 = predictions[qi][:5].tolist() if len(predictions[qi]) >= 5 else predictions[qi].tolist()
-                        top5_paths = [current_val_dataset.images[int(idx)] for idx in top5]
+                        top5_paths = [val_dataset.images[int(idx)] for idx in top5]
                         pred_data["queries"].append({
                             "query_idx": int(qi),
                             "query_path": q_paths[qi],
@@ -728,23 +713,21 @@ class VPRModel(pl.LightningModule):
                     "R10": float(pitts_dict[10]),
                 })
 
-            # ADDED: aggregate metrics over all validation datasets
-            if len(all_val_r1) > 0:
-                mean_r1_4sets = float(np.mean(all_val_r1))
-                min_r1_4sets = float(np.min(all_val_r1))    
+        if len(all_val_r1) > 0:
+            mean_r1_4sets = float(np.mean(all_val_r1))
+            min_r1_4sets = float(np.min(all_val_r1))    
 
-                self.log("val_mean_R1_4sets", mean_r1_4sets, prog_bar=True, logger=True)
-                self.log("val_min_R1_4sets", min_r1_4sets, prog_bar=True, logger=True)  
+            self.log("val_mean_R1_4sets", mean_r1_4sets, prog_bar=True, logger=True)
+            self.log("val_min_R1_4sets", min_r1_4sets, prog_bar=True, logger=True)  
 
-                print(
-                    f"Aggregate metrics: val_mean_R1_4sets = {mean_r1_4sets:.4f}, "
-                    f"val_min_R1_4sets = {min_r1_4sets:.4f}"
-                )   
+            print(
+                f"\nAggregate metrics: val_mean_R1_4sets = {mean_r1_4sets:.4f}, "
+                f"val_min_R1_4sets = {min_r1_4sets:.4f}"
+            )   
+        print("\n\n")   
 
-            print("\n\n")   
 
-            # reset the outputs list
-            self.val_outputs = []
+        self.val_outputs = []
 
         if self.run_dir is not None and len(self.val_metrics_log) > 0:
             metrics_file = Path(self.run_dir) / "val_metrics.jsonl"
@@ -799,88 +782,73 @@ class VPRModel(pl.LightningModule):
 
 
     @torch.no_grad()
-    def extract_attention_maps(self, val_dataset, val_dataloader, device, output_dir, num_queries=3):
+    def extract_attention_single_image(self, val_dataset, image_path, device, output_dir):
         self.eval()
         self.to(device)
         os.makedirs(output_dir, exist_ok=True)
         
-        num_refs = len(val_dataset.db_image_paths)
-        queries_processed = 0
+        # Znajdź indeks
+        abs_target = str(Path(image_path).resolve())
+        path_to_idx = {str(Path(p).resolve()): i for i, p in enumerate(val_dataset.images)}
         
-        for batch in val_dataloader:
-            if queries_processed >= num_queries:
-                break
-                
-            places, indices = batch
-            if places.dim() == 5:
-                BS, N, ch, h, w = places.shape
-                images = places.view(BS * N, ch, h, w)
-                indices = indices.view(-1)
-            else:
-                images = places
-                
-            images = images.to(device)
-            
-            _, attn_maps = self(images)  # attn_maps: (B, H, W)
-            
-            for b in range(attn_maps.shape[0]):
-                if queries_processed >= num_queries:
-                    break
-                    
-                global_idx = indices[b].item()
-                if global_idx < num_refs:
-                    continue  # skip reference
-                    
-                # load original
-                img_path = val_dataset.images[global_idx]
-                try:
-                    orig = cv2.imread(str(img_path))
-                    orig = cv2.cvtColor(orig, cv2.COLOR_BGR2RGB)
-                except Exception:
-                    continue
-                
-                attn = attn_maps[b].cpu().numpy()
-                attn_resized = cv2.resize(attn, (orig.shape[1], orig.shape[0]))
-                a_min, a_max = attn_resized.min(), attn_resized.max()
-                attn_norm = (attn_resized - a_min) / (a_max - a_min + 1e-9)
-                
-                orig_path = Path(output_dir) / f"query{queries_processed}_orig.jpg"
-                cv2.imwrite(str(orig_path), cv2.cvtColor(orig, cv2.COLOR_RGB2BGR))
-                
-                heatmap_color = plt.cm.jet(attn_norm)[:, :, :3]
-                heatmap_color = (heatmap_color * 255).astype(np.uint8)
-                heatmap_path = Path(output_dir) / f"query{queries_processed}_heatmap.jpg"
-                cv2.imwrite(str(heatmap_path), cv2.cvtColor(heatmap_color, cv2.COLOR_RGB2BGR))
-                
-                overlay = cv2.addWeighted(orig, 0.6, heatmap_color, 0.4, 0)
-                overlay_path = Path(output_dir) / f"query{queries_processed}_overlay.jpg"
-                cv2.imwrite(str(overlay_path), cv2.cvtColor(overlay, cv2.COLOR_RGB2BGR))
-                
-                fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-                
-                axes[0].imshow(orig)
-                axes[0].set_title("Original UAV Query", fontsize=11, fontweight='bold')
-                axes[0].axis('off')
-                
-                axes[1].imshow(heatmap_color)
-                axes[1].set_title("Attention Heatmap\n(GeM Pooling)", fontsize=11, fontweight='bold')
-                axes[1].axis('off')
-                
-                axes[2].imshow(overlay)
-                axes[2].set_title("Overlay\n(60% image + 40% heatmap)", fontsize=11, fontweight='bold')
-                axes[2].axis('off')
-                
-                fig.suptitle(f"Attention Visualization | Query {queries_processed}", 
-                            fontsize=13, fontweight='bold', y=0.98)
-                plt.tight_layout()
-                comparison_path = Path(output_dir) / f"query{queries_processed}_comparison.png"
-                plt.savefig(comparison_path, dpi=150, bbox_inches='tight', facecolor='white')
-                plt.close()
-                
-                queries_processed += 1
+        if abs_target not in path_to_idx:
+            print(f"[WARN] Image {image_path} not found in val_dataset.")
+            return
         
-        print(f"Saved {queries_processed} attention maps to {output_dir}")
-        return queries_processed
+        idx = path_to_idx[abs_target]
+        places, _ = val_dataset[idx]
+        
+        if places.dim() == 4:  # (N, C, H, W)
+            images = places[[0]]  # Weź pierwszy
+        elif places.dim() == 3:  # (C, H, W)
+            images = places.unsqueeze(0)
+        else:
+            print(f"[WARN] Unexpected tensor shape: {places.shape}")
+            return
+        
+        images = images.to(device)
+        _, attn_maps = self(images)
+        attn = attn_maps[0].cpu().numpy()
+        
+        # Loads orginal image
+        try:
+            orig = cv2.imread(str(image_path))
+            orig = cv2.cvtColor(orig, cv2.COLOR_BGR2RGB)
+        except Exception as e:
+            print(f"[ERROR] Cannot load {image_path}: {e}")
+            return
+        
+        attn_resized = cv2.resize(attn, (orig.shape[1], orig.shape[0]))
+        a_min, a_max = attn_resized.min(), attn_resized.max()
+        attn_norm = (attn_resized - a_min) / (a_max - a_min + 1e-9)
+        
+        heatmap_color = plt.cm.jet(attn_norm)[:, :, :3]
+        heatmap_color = (heatmap_color * 255).astype(np.uint8)
+        overlay = cv2.addWeighted(orig, 0.6, heatmap_color, 0.4, 0)
+        
+        img_name = Path(image_path).stem
+        
+        fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+        axes[0].imshow(orig)
+        axes[0].set_title("Original", fontweight='bold')
+        axes[0].axis('off')
+        
+        axes[1].imshow(heatmap_color)
+        axes[1].set_title("Attention Heatmap", fontweight='bold')
+        axes[1].axis('off')
+        
+        axes[2].imshow(overlay)
+        axes[2].set_title("Overlay", fontweight='bold')
+        axes[2].axis('off')
+        
+        fig.suptitle(f"Attention: {img_name}", fontsize=13, fontweight='bold')
+        plt.tight_layout()
+        
+        output_path = Path(output_dir) / f"{img_name}_attention.png"
+        plt.savefig(output_path, dpi=150, bbox_inches='tight', facecolor='white')
+        plt.close()
+        
+        print(f"✅ Saved to {output_path}")
     
     def debug_step(
         self,
@@ -1253,7 +1221,7 @@ class VPRModel(pl.LightningModule):
         return "MARGINAL"
 
 
-    def log_basic_mining_stats(self, descriptors, miner_outputs):
+    def log_basic_mining_stats(self, mat, miner_outputs):
         """
         Log similarity statistics for mined examples.   
 
@@ -1279,11 +1247,8 @@ class VPRModel(pl.LightningModule):
         if miner_outputs is None:
             return  
 
-        dist = self.get_distance_obj(self.loss_fn, self.miner)  
 
-        with torch.no_grad():
-            mat = dist(descriptors, descriptors).detach()   
-
+        with torch.no_grad(): 
             if len(miner_outputs) == 4:
                 a_pos, p, a_neg, n = miner_outputs  
 
@@ -1328,7 +1293,7 @@ class VPRModel(pl.LightningModule):
                         logger=True,
                     )   
 
-    def log_domain_aware_mining(self, descriptors, domains, miner_outputs):
+    def log_domain_aware_mining(self, mat, domains, miner_outputs):
         """
         Domain-aware mining analysis.
 
@@ -1347,11 +1312,8 @@ class VPRModel(pl.LightningModule):
         - high mined_neg_uav_sat_share with high similarity:
             model is confused across domains or training is over-pushing cross-domain negatives
         """
-        dist = self.get_distance_obj(self.loss_fn, self.miner)
 
         with torch.no_grad():
-            mat = dist(descriptors, descriptors).detach()
-
             if len(miner_outputs) == 4:
                 a_pos, p, a_neg, n = miner_outputs
                 self._log_pair_group("mined_pos", a_pos, p, domains, mat)

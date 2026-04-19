@@ -6,14 +6,13 @@ import shutil
 import inspect
 import copy
 from pathlib import Path
-import warnings
 
+import numpy as np
 import pandas as pd
 import pytorch_lightning as pl
 import torch
-import numpy as np
 import matplotlib
-matplotlib.use('Agg')  # MUSI być przed importem pyplot
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from PIL import Image
 
@@ -98,7 +97,7 @@ def get_processed_path(base_path: str, suffix: str) -> str:
     return str(path_obj.parent / new_filename)
 
 
-def build_callbacks(run_dir: Path):
+def build_callbacks(run_dir: Path, val_csvs: List[str] = None):
     ckpt_dir = run_dir / "checkpoints"
     ckpt_dir.mkdir(parents=True, exist_ok=True)
 
@@ -124,41 +123,45 @@ def build_callbacks(run_dir: Path):
         mode="max",
     )
 
-    checkpoint_shandan_v1 = pl.callbacks.ModelCheckpoint(
-        dirpath=str(ckpt_dir),
-        monitor="Shandan-v1_one_to_one/R1",
-        filename="best_shandan_v1-{epoch:02d}-{Shandan-v1_one_to_one/R1:.4f}",
-        auto_insert_metric_name=False,
-        save_weights_only=True,
-        save_top_k=1,
-        save_last=False,
-        mode="max",
-    )
-
-    checkpoint_changjiang_v1 = pl.callbacks.ModelCheckpoint(
-        dirpath=str(ckpt_dir),
-        monitor="Changjiang-23-v1_one_to_one/R1",
-        filename="best_changjiang_v1-{epoch:02d}-{Changjiang-23-v1_one_to_one/R1:.4f}",
-        auto_insert_metric_name=False,
-        save_weights_only=True,
-        save_top_k=1,
-        save_last=False,
-        mode="max",
-    )
-
-    callbacks = [
-        checkpoint_mean,
-        checkpoint_min,
-        checkpoint_shandan_v1,
-        checkpoint_changjiang_v1,
-    ]
-
+    callbacks = [checkpoint_mean, checkpoint_min]
     cb_map = {
         "mean": checkpoint_mean,
         "min": checkpoint_min,
-        "shandan_v1": checkpoint_shandan_v1,
-        "changjiang_v1": checkpoint_changjiang_v1,
     }
+
+    if val_csvs:
+        for csv_path in val_csvs:
+            stem = Path(csv_path).stem
+            monitor_name = f"{stem}/R1"
+
+            if "Shandan" in stem and "v1" in stem:
+                checkpoint = pl.callbacks.ModelCheckpoint(
+                    dirpath=str(ckpt_dir),
+                    monitor=monitor_name,
+                    filename="best_shandan_v1-{epoch:02d}",
+                    auto_insert_metric_name=False,
+                    save_weights_only=True,
+                    save_top_k=1,
+                    save_last=False,
+                    mode="max",
+                )
+                callbacks.append(checkpoint)
+                cb_map["shandan_v1"] = checkpoint
+
+            elif "Changjiang-23" in stem and "v1" in stem:
+                checkpoint = pl.callbacks.ModelCheckpoint(
+                    dirpath=str(ckpt_dir),
+                    monitor=monitor_name,
+                    filename="best_changjiang_v1-{epoch:02d}",
+                    auto_insert_metric_name=False,
+                    save_weights_only=True,
+                    save_top_k=1,
+                    save_last=False,
+                    mode="max",
+                )
+                callbacks.append(checkpoint)
+                cb_map["changjiang_v1"] = checkpoint
+
     return callbacks, cb_map
 
 
@@ -173,10 +176,11 @@ def score_to_float(x):
 def ensure_place_ids_for_variant(
     config: PipelineConfig,
     data_config: List[dict],
-    use_water_removal: bool,
+    use_water_removal: bool,  # True = NO_WATER (usuwamy wodę), False = WATER (zostawiamy wodę)
     force_regenerate: bool = False
 ) -> tuple[List[str], List[str]]:
-    water_tag = "water" if use_water_removal else "nowater"
+
+    water_tag = "water_removed" if use_water_removal else "water_kept"
     train_csvs: List[str] = []
     val_csvs: List[str] = []
 
@@ -185,14 +189,30 @@ def ensure_place_ids_for_variant(
     for d_conf in data_config:
         region_name = d_conf["region_name"]
         base_path = str(config.DATAFRAMES_ONE_TO_ONE_DIR / f"{region_name}.csv")
-        final_suffix = f"{d_conf['output_suffix']}_{water_tag}"
-        final_path = get_processed_path(base_path, final_suffix)
-
+        
         is_val = d_conf["set_type"] == "val"
+        
+        # Validation sets always NO_WATER
+        if is_val:
+            final_suffix = f"{d_conf['output_suffix']}_FIXED_NO_WATER"
+            use_filter_for_this = True
+            water_tag_for_file = "fixed_no_water"
+        else:
+            final_suffix = f"{d_conf['output_suffix']}_{water_tag}"
+            use_filter_for_this = use_water_removal
+            water_tag_for_file = water_tag
+        
+        final_path = get_processed_path(base_path, final_suffix)
+        
+        print(f"  Region: {region_name}")
+        print(f"    Type: {'VAL' if is_val else 'TRAIN'}")
+        print(f"    Filter enabled: {use_filter_for_this}")
+        print(f"    Output: {final_path}")
+        
         need_generate = force_regenerate or not Path(final_path).exists()
-
+        
         if need_generate:
-            print(f"  [GEN] {region_name} -> {final_path}")
+            print(f"    [GENERATING...]")
             generator = ManyToManyPlaceIdGenerator(
                 csv_tiles_path=base_path,
                 csv_place_ids_output_path=final_path,
@@ -201,19 +221,18 @@ def ensure_place_ids_for_variant(
                 is_validation_set_v2=d_conf.get("val_variant") == "v2",
                 radius_neighbors_meters=70 if is_val else d_conf["crop_range_meters"],
                 tiles_trash_directory=config.DATAFRAMES_TILES_TRASH,
-                use_informativeness_filter=use_water_removal,  # KLUCZOWE
+                use_informativeness_filter=use_filter_for_this,
             )
             generator.generate_place_ids()
         else:
-            print(f"  [SKIP] {region_name} (already exists)")
-
+            print(f"    [EXISTS]")
+        
         if d_conf["set_type"] == "train":
             train_csvs.append(final_path)
         elif d_conf["set_type"] == "val":
             val_csvs.append(final_path)
-
+    
     return train_csvs, val_csvs
-
 
 def run_experiment(
     exp: dict,
@@ -221,8 +240,6 @@ def run_experiment(
     val_csvs: List[str],
     logs_root: Path,
     config: PipelineConfig,
-    extract_attention: bool = True,
-    num_attention_queries: int = 3,
 ) -> dict:
     print("\n" + "=" * 100)
     print(f"EXPERIMENT: {exp['name']}")
@@ -232,8 +249,33 @@ def run_experiment(
 
     pl.seed_everything(exp["seed"], workers=True)
 
+    print("\n[STATS] Training datasets summary:")
+    total_uav = 0
+    total_sat = 0
+    total_places = 0
+    for csv_path in train_csvs:
+        df = pd.read_csv(csv_path)
+        uav_count = len(df[df['friendly-name'].str.contains('uav', case=False, na=False)])
+        sat_count = len(df[df['friendly-name'].str.contains('satellite', case=False, na=False)])
+        place_count = df['place_id'].nunique()
+        
+        total_uav += uav_count
+        total_sat += sat_count
+        total_places += place_count
+        
+        print(f"  {Path(csv_path).name}:")
+        print(f"    UAV: {uav_count}, SAT: {sat_count}, Places: {place_count}")
+    
+    print(f"\n  TOTAL -> UAV: {total_uav}, SAT: {total_sat}, Places: {total_places}")
+    print("=" * 100)
+
     run_dir = (logs_root / exp["name"]).resolve()
     run_dir.mkdir(parents=True, exist_ok=True)
+
+    metrics_jsonl = run_dir / "val_metrics.jsonl"
+    if metrics_jsonl.exists():
+        print(f"[CLEAN] Removing stale metrics file: {metrics_jsonl}")
+        metrics_jsonl.unlink()
 
     with open(run_dir / "experiment_config.json", "w", encoding='utf-8') as f:
         json.dump(exp, f, indent=2)
@@ -249,11 +291,10 @@ def run_experiment(
     model_kwargs = {k: v for k, v in exp.items() if k in valid_model_args}
     model = VPRModel(**model_kwargs)
 
-    # AB test hooks
-    model.save_val_predictions = True
+    model.save_val_predictions = False
     model.run_dir = str(run_dir)
 
-    callbacks, cb_map = build_callbacks(run_dir)
+    callbacks, cb_map = build_callbacks(run_dir, val_csvs=val_csvs)
 
     old_cwd = os.getcwd()
     os.chdir(run_dir)
@@ -282,28 +323,19 @@ def run_experiment(
         torch.save(model.state_dict(), full_model_path)
         print(f"Saved final model state_dict to: {full_model_path}")
 
-        if extract_attention:
-            device = next(model.parameters()).device
-            val_dataloaders = trainer.val_dataloaders if hasattr(trainer, 'val_dataloaders') else None
-            if val_dataloaders is None:
-                val_dataloaders = datamodule.val_dataloader()
-            if not isinstance(val_dataloaders, list):
-                val_dataloaders = [val_dataloaders]
+        best_model_path = cb_map["mean"].best_model_path
+        if best_model_path and Path(best_model_path).exists():
+            print(f"\n[INFO] Wczytywanie globalnie najlepszego modelu z: {best_model_path}")
+            model = VPRModel.load_from_checkpoint(best_model_path, strict=True)
+        else:
+            print("[WARN] No best checkpoint found. System keeps wages from last epoch.")
 
-            for i, (val_dl, val_name) in enumerate(zip(val_dataloaders, val_csvs)):
-                short_name = Path(val_name).stem
-                attn_dir = run_dir / "attention_maps" / short_name
-                val_dataset = datamodule.val_datasets[i]
-                try:
-                    model.extract_attention_maps(
-                        val_dataset=val_dataset,
-                        val_dataloader=val_dl,
-                        device=device,
-                        output_dir=str(attn_dir),
-                        num_queries=num_attention_queries,
-                    )
-                except Exception as e:
-                    print(f"[WARN] Attention extraction failed for {short_name}: {e}")
+        model.save_val_predictions = True
+        model.run_dir = str(run_dir)
+        model.is_final_validation = True
+
+        print("\n[INFO] Final validation for best model...")
+        trainer.validate(model, datamodule=datamodule)
 
     finally:
         os.chdir(old_cwd)
@@ -313,13 +345,16 @@ def run_experiment(
         "seed": exp["seed"],
         "use_water_removal": exp.get("use_water_removal", True),
         "best_mean_score": score_to_float(cb_map["mean"].best_model_score),
-        "best_mean_path": cb_map["mean"].best_model_path,
+        "best_mean_path": str(cb_map["mean"].best_model_path),
         "best_min_score": score_to_float(cb_map["min"].best_model_score),
-        "best_min_path": cb_map["min"].best_model_path,
-        "best_shandan_v1_score": score_to_float(cb_map["shandan_v1"].best_model_score),
-        "best_changjiang_v1_score": score_to_float(cb_map["changjiang_v1"].best_model_score),
+        "best_min_path": str(cb_map["min"].best_model_path),
+        "best_shandan_v1_score": score_to_float(getattr(cb_map.get("shandan_v1"), "best_model_score", None)),
+        "best_changjiang_v1_score": score_to_float(getattr(cb_map.get("changjiang_v1"), "best_model_score", None)),
         "final_model_path": str(run_dir / "full_model_final.pth"),
         "run_dir": str(run_dir),
+        "train_total_uav": total_uav,
+        "train_total_sat": total_sat,
+        "train_total_places": total_places,
     }
 
     metrics_jsonl = run_dir / "val_metrics.jsonl"
@@ -327,26 +362,19 @@ def run_experiment(
         with open(metrics_jsonl, 'r', encoding='utf-8') as f:
             lines = [json.loads(l) for l in f if l.strip()]
         if lines:
-            last_epoch = lines[-1]
-            metrics_summary["last_epoch_metrics"] = last_epoch.get("datasets", {})
+            last_entry = lines[-1]
+            metrics_summary["best_epoch_used"] = last_entry.get("epoch")
+            metrics_summary["best_model_metrics"] = last_entry.get("datasets", {})
 
-    del trainer
-    del model
-    del datamodule
+    del trainer, model, datamodule
     torch.cuda.empty_cache()
     gc.collect()
 
     return metrics_summary
 
+
 def select_interesting_queries(predictions_water: dict, predictions_nowater: dict, 
                                  num_divergent: int = 3, num_consensus: int = 2) -> tuple:
-    """
-    Selects interesting queries for visualization.
-    
-    Returns:
-        divergent: list where water and no-water disagree (priority: water=HIT, no-water=MISS)
-        consensus_hits: list where both agree and both are HIT (for comparison)
-    """
     divergent = []
     consensus_hits = []
     
@@ -357,10 +385,13 @@ def select_interesting_queries(predictions_water: dict, predictions_nowater: dic
         print(f"[WARN] Query count mismatch: water={len(queries_w)}, no-water={len(queries_n)}")
         return [], []
     
-    for qw, qn in zip(queries_w, queries_n):
-        if qw.get("query_path") != qn.get("query_path"):
-            continue  # sanity check failed
-            
+    dict_n = {q["query_path"]: q for q in queries_n}
+    for qw in queries_w:
+        path = qw["query_path"]
+        if path not in dict_n:
+            continue
+        qn = dict_n[path]
+        
         hit_w = qw.get("is_hit_r1", False)
         hit_n = qn.get("is_hit_r1", False)
         
@@ -376,47 +407,38 @@ def select_interesting_queries(predictions_water: dict, predictions_nowater: dic
         
         if hit_w != hit_n:
             divergent.append(entry)
-        elif hit_w and hit_n:  # both hit
+        elif hit_w and hit_n:
             consensus_hits.append(entry)
             
         if len(divergent) >= num_divergent and len(consensus_hits) >= num_consensus:
             break
     
-    # If not enough divergent, add some consensus hits as filler
-    if len(divergent) < num_divergent:
-        print(f"[INFO] Only {len(divergent)} divergent queries found, adding consensus hits")
-        
     return divergent[:num_divergent], consensus_hits[:num_consensus]
 
-def create_comparison_figure(query_path: str, water_top1: str, nowater_top1: str,
-                             output_path: Path, title: str = ""):
-    """Creates side-by-side comparison of query and top-1 predictions."""
+def create_comparison_figure_fixed(query_path: str, water_top1: str, nowater_top1: str,
+                             output_path: Path, water_status: str, nowater_status: str, title: str = ""):
+
     try:
         fig, axes = plt.subplots(1, 3, figsize=(15, 5))
         
-        # Query
         img_q = Image.open(query_path).convert('RGB')
         axes[0].imshow(img_q)
         axes[0].set_title("Query (UAV)")
         axes[0].axis('off')
         
-        # Water variant result
         if water_top1 and os.path.exists(water_top1):
             img_w = Image.open(water_top1).convert('RGB')
             axes[1].imshow(img_w)
-            status = "HIT" if "hit" in title.lower() else "Result"
-            axes[1].set_title(f"With Water Removal\n{status}")
+            axes[1].set_title(f"With Water Removal\n{water_status}")
         else:
             axes[1].text(0.5, 0.5, "Image not found", ha='center', va='center')
             axes[1].set_title("With Water Removal")
         axes[1].axis('off')
         
-        # No-water variant result
         if nowater_top1 and os.path.exists(nowater_top1):
             img_n = Image.open(nowater_top1).convert('RGB')
             axes[2].imshow(img_n)
-            status = "MISS" if "miss" in title.lower() else "Result"
-            axes[2].set_title(f"Without Water Removal\n{status}")
+            axes[2].set_title(f"Without Water Removal\n{nowater_status}")
         else:
             axes[2].text(0.5, 0.5, "Image not found", ha='center', va='center')
             axes[2].set_title("Without Water Removal")
@@ -433,10 +455,8 @@ def create_comparison_figure(query_path: str, water_top1: str, nowater_top1: str
         print(f"[ERROR] Failed to create figure: {e}")
         return False
 
-def generate_ab_report(logs_root: Path, output_dir: Path, num_examples: int = 3):
-    """
-    Generates final AB test report: tables, charts, and query/result examples.
-    """
+
+def generate_ab_report(logs_root: Path, output_dir: Path, config: PipelineConfig, data_config: List[dict], num_examples: int = 3):
     output_dir.mkdir(parents=True, exist_ok=True)
     results_csv = logs_root / "ab_results.csv"
     
@@ -446,28 +466,35 @@ def generate_ab_report(logs_root: Path, output_dir: Path, num_examples: int = 3)
 
     df = pd.read_csv(results_csv)
     
-    # Parse metrics
+    df['base_config'] = df['experiment'].str.replace(r'_(WATER|NOWATER)_s\d+$', '', regex=True)
+    
     rows = []
     for _, row in df.iterrows():
         base = {
             "experiment": row["experiment"],
+            "base_config": row["base_config"],
             "seed": row["seed"],
             "use_water_removal": row["use_water_removal"],
             "best_mean_R1": row["best_mean_score"],
+            "epoch_used": row.get("best_epoch_used"),
+            "train_total_uav": row.get("train_total_uav"),
+            "train_total_sat": row.get("train_total_sat"),
+            "train_total_places": row.get("train_total_places"),
         }
-        metrics_json = row.get("last_epoch_metrics", "{}")
+        metrics_json = row.get("best_model_metrics") or "{}"
         if isinstance(metrics_json, str):
             try:
                 metrics_json = json.loads(metrics_json)
             except Exception:
                 metrics_json = {}
+
         for ds_name, vals in metrics_json.items():
             rows.append({
                 **base,
                 "dataset": ds_name,
-                "R1": vals.get("R1", None),
-                "R5": vals.get("R5", None),
-                "R10": vals.get("R10", None),
+                "R1": vals.get("R1"),
+                "R5": vals.get("R5"),
+                "R10": vals.get("R10"),
             })
     
     report_df = pd.DataFrame(rows)
@@ -475,33 +502,6 @@ def generate_ab_report(logs_root: Path, output_dir: Path, num_examples: int = 3)
     report_df.to_csv(report_path, index=False)
     print(f"Report table saved to {report_path}")
 
-    # Statistical summary per dataset
-    summary_rows = []
-    for ds_name in report_df["dataset"].unique():
-        ds_data = report_df[report_df["dataset"] == ds_name]
-        water_data = ds_data[ds_data["use_water_removal"] == True]
-        nowater_data = ds_data[ds_data["use_water_removal"] == False]
-        
-        if len(water_data) > 0 and len(nowater_data) > 0:
-            water_r1_mean = water_data["R1"].mean()
-            nowater_r1_mean = nowater_data["R1"].mean()
-            improvement = water_r1_mean - nowater_r1_mean
-            
-            summary_rows.append({
-                "dataset": ds_name,
-                "water_r1_mean": water_r1_mean,
-                "nowater_r1_mean": nowater_r1_mean,
-                "absolute_improvement": improvement,
-                "relative_improvement_pct": (improvement / nowater_r1_mean * 100) if nowater_r1_mean > 0 else 0,
-                "num_seeds": min(len(water_data), len(nowater_data)),
-            })
-    
-    summary_df = pd.DataFrame(summary_rows)
-    summary_path = output_dir / "ab_summary_stats.csv"
-    summary_df.to_csv(summary_path, index=False)
-    print(f"Summary statistics saved to {summary_path}")
-
-    # Bar chart comparison
     if not report_df.empty:
         metrics = ["R1", "R5", "R10"]
         fig, axes = plt.subplots(1, 3, figsize=(18, 6))
@@ -518,187 +518,144 @@ def generate_ab_report(logs_root: Path, output_dir: Path, num_examples: int = 3)
             
             water_means = agg[agg["use_water_removal"] == True].set_index("dataset")["mean"]
             nowater_means = agg[agg["use_water_removal"] == False].set_index("dataset")["mean"]
-            water_std = agg[agg["use_water_removal"] == True].set_index("dataset")["std"]
-            nowater_std = agg[agg["use_water_removal"] == False].set_index("dataset")["std"]
             
-            vals_water = [water_means.get(d, 0) for d in datasets]
-            vals_nowater = [nowater_means.get(d, 0) for d in datasets]
-            err_water = [water_std.get(d, 0) for d in datasets]
-            err_nowater = [nowater_std.get(d, 0) for d in datasets]
+            vals_water = [water_means.get(d, np.nan) for d in datasets]
+            vals_nowater = [nowater_means.get(d, np.nan) for d in datasets]
             
-            bars1 = ax.bar(x - width/2, vals_nowater, width, yerr=err_nowater,
-                          label='Baseline (no water removal)', capsize=3, color='coral', alpha=0.8)
-            bars2 = ax.bar(x + width/2, vals_water, width, yerr=err_water,
-                          label='With water removal', capsize=3, color='seagreen', alpha=0.8)
+            ax.bar(x - width/2, vals_nowater, width, label='Baseline (WATER)', color='coral', alpha=0.8)
+            ax.bar(x + width/2, vals_water, width, label='Filtered (NO_WATER)', color='seagreen', alpha=0.8)
             
-            # Value labels
-            for bar in bars1:
-                h = bar.get_height()
-                ax.annotate(f'{h:.3f}', xy=(bar.get_x() + bar.get_width()/2, h),
-                           xytext=(0, 2), textcoords="offset points", ha='center', va='bottom', fontsize=8)
-            for bar in bars2:
-                h = bar.get_height()
-                ax.annotate(f'{h:.3f}', xy=(bar.get_x() + bar.get_width()/2, h),
-                           xytext=(0, 2), textcoords="offset points", ha='center', va='bottom', fontsize=8)
-            
-            ax.set_ylabel(f'Recall@{metric[-1]}', fontsize=11)
             ax.set_title(f'Recall@{metric[-1]} Comparison', fontsize=12, fontweight='bold')
             ax.set_xticks(x)
             ax.set_xticklabels(datasets, rotation=30, ha='right', fontsize=9)
             ax.legend(loc='upper right', fontsize=8)
-            ax.grid(axis='y', alpha=0.3)
-            ax.set_ylim(0, max(max(vals_water, default=0), max(vals_nowater, default=0)) * 1.2)
+            ax.set_ylim(0, 1.05)
         
-        fig.suptitle('AB Test: Impact of Water Removal on VPR Performance', 
-                    fontsize=14, fontweight='bold', y=1.02)
+        fig.suptitle('AB Test: Impact of Water Removal on VPR Performance', fontsize=14, fontweight='bold')
         plt.tight_layout()
         plt.savefig(output_dir / "ab_comparison_all_metrics.png", dpi=150, bbox_inches='tight')
         plt.close()
-        print(f"Chart saved to {output_dir / 'ab_comparison_all_metrics.png'}")
 
-    # Query/Result Examples with Visualizations
     examples_dir = output_dir / "query_examples"
     examples_dir.mkdir(exist_ok=True)
+
+    _, val_csvs_fixed = ensure_place_ids_for_variant(config, data_config, use_water_removal=True) # flaga nie ma znaczenia dla val, i tak wymusi FIXED_NO_WATER
+    dm_fixed = MapsDataModule(tiles_csv_file_paths=[], batch_size=1, val_set_names=val_csvs_fixed, shuffle_all=False)
     
-    # Collect all predictions
+    ds_map_fixed = {Path(p).stem.replace("_FIXED_NO_WATER", ""): ds for p, ds in zip(dm_fixed.val_set_names, dm_fixed.val_datasets)}
+
     all_predictions = {}
     for _, row in df.iterrows():
         run_dir = Path(row["run_dir"])
-        pred_files = list(run_dir.glob("predictions_*.json"))
-        for pf in pred_files:
-            ds_name = pf.stem.replace("predictions_", "")
+        for pf in run_dir.glob("predictions_*.json"):
+            raw_name = pf.stem.replace("predictions_", "")
+            ds_name = raw_name.replace("_FIXED_NO_WATER", "") # Normalizacja nazwy
+            
             key = (row["seed"], row["use_water_removal"], ds_name)
-            try:
-                with open(pf, 'r', encoding='utf-8') as f:
-                    all_predictions[key] = json.load(f)
-            except Exception as e:
-                print(f"[WARN] Failed to load {pf}: {e}")
+            with open(pf, 'r', encoding='utf-8') as f:
+                all_predictions[key] = json.load(f)
 
-    # Generate examples per seed and dataset
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     example_records = []
-    seeds = sorted(df["seed"].unique())
     
-    for seed in seeds:
-        for ds_name in ["Shandan-v1_one_to_one", "Changjiang-23-v1_one_to_one"]:
-            key_water = (seed, True, ds_name)
-            key_nowater = (seed, False, ds_name)
-            
-            if key_water not in all_predictions or key_nowater not in all_predictions:
-                continue
-            
-            preds_w = all_predictions[key_water]
-            preds_n = all_predictions[key_nowater]
-            
-            divergent, consensus = select_interesting_queries(preds_w, preds_n, 
-                                                              num_divergent=num_examples, 
-                                                              num_consensus=2)
-            
-            # Process divergent examples (most interesting)
-            for idx, ex in enumerate(divergent):
-                ex_dir = examples_dir / f"seed{seed}_{ds_name}_ex{idx+1:02d}_{'water_hit' if ex['water_hit'] else 'water_miss'}"
-                ex_dir.mkdir(exist_ok=True)
+    seeds = sorted(df["seed"].unique())
+    base_configs = sorted(df["base_config"].unique())
+    all_datasets = sorted({key[2] for key in all_predictions.keys()})
+    
+    for base_cfg in base_configs:
+        for seed in seeds:
+            for ds_name in all_datasets:
+                key_water = (seed, False, ds_name) # WATER = False
+                key_nowater = (seed, True, ds_name) # NOWATER = True
                 
-                # Copy images
-                try:
-                    if os.path.exists(ex["query_path"]):
-                        shutil.copy2(ex["query_path"], ex_dir / "query.jpg")
-                    if ex["water_top1"] and os.path.exists(ex["water_top1"]):
-                        shutil.copy2(ex["water_top1"], ex_dir / "water_top1.jpg")
-                    if ex["nowater_top1"] and os.path.exists(ex["nowater_top1"]):
-                        shutil.copy2(ex["nowater_top1"], ex_dir / "nowater_top1.jpg")
-                except Exception as e:
-                    print(f"[WARN] Could not copy images for example: {e}")
+                if key_water not in all_predictions or key_nowater not in all_predictions:
+                    continue
                 
-                # Create comparison figure
-                title = f"{ds_name} | Seed {seed}\nWater: {'HIT' if ex['water_hit'] else 'MISS'} | No-Water: {'HIT' if ex['nowater_hit'] else 'MISS'}"
-                create_comparison_figure(
-                    ex["query_path"], ex["water_top1"], ex["nowater_top1"],
-                    ex_dir / "comparison.png", title=title
-                )
+                preds_w = all_predictions[key_water]
+                preds_n = all_predictions[key_nowater]
                 
-                # Record for text report
-                example_records.append({
-                    "seed": seed,
-                    "dataset": ds_name,
-                    "example_num": idx + 1,
-                    "query_path": ex["query_path"],
-                    "water_result": "HIT" if ex["water_hit"] else "MISS",
-                    "nowater_result": "HIT" if ex["nowater_hit"] else "MISS",
-                    "improvement": "YES" if (ex["water_hit"] and not ex["nowater_hit"]) else "NO",
-                    "example_dir": str(ex_dir.relative_to(output_dir))
-                })
-            
-            # If no divergent found, use consensus hits
-            if not divergent and consensus:
-                print(f"[INFO] No divergent queries for {ds_name} seed {seed}, showing consensus HIT")
-                for idx, ex in enumerate(consensus[:2]):
-                    ex_dir = examples_dir / f"seed{seed}_{ds_name}_consensus{idx+1:02d}"
-                    ex_dir.mkdir(exist_ok=True)
-                    # ... (similar processing, omitted for brevity)
+                divergent, consensus = select_interesting_queries(preds_w, preds_n, num_divergent=num_examples, num_consensus=2)
+                selected_queries = divergent if divergent else consensus[:num_examples]
+                
+                if not selected_queries:
+                    continue
 
-    # Generate text report
+                lookup_key = ds_name.replace("_FIXED_NO_WATER", "")
+                ds_obj = ds_map_fixed.get(lookup_key) # Jeden wspólny dataset
+                
+                df_w = df[(df["base_config"] == base_cfg) & (df["seed"] == seed) & (df["use_water_removal"] == False)]
+                df_n = df[(df["base_config"] == base_cfg) & (df["seed"] == seed) & (df["use_water_removal"] == True)]
+                
+                if df_w.empty or df_n.empty:
+                    continue
+
+                row_w = df_w.iloc[0]
+                row_n = df_n.iloc[0]
+                
+                model_w, model_n = None, None
+                try:
+                    model_w = VPRModel.load_from_checkpoint(row_w["best_mean_path"], strict=True)
+                except Exception as e:
+                    print(f"Failed to load WATER model: {e}")
+                
+                try:
+                    model_n = VPRModel.load_from_checkpoint(row_n["best_mean_path"], strict=True)
+                except Exception as e:
+                    print(f"Failed to load NOWATER model: {e}")
+            
+                for idx, ex in enumerate(selected_queries):
+                    ex_type = "divergent" if ex in divergent else "consensus"
+                    ex_dir = examples_dir / f"{base_cfg}_s{seed}_{ds_name}_{ex_type}_{idx+1:02d}"
+                    ex_dir.mkdir(exist_ok=True)
+                    
+                    query_path = ex["query_path"]
+                    
+                    if model_w and ds_obj:
+                        model_w.extract_attention_single_image(ds_obj, query_path, device, str(ex_dir / "water_attn"))
+                    if model_n and ds_obj:
+                        model_n.extract_attention_single_image(ds_obj, query_path, device, str(ex_dir / "nowater_attn"))
+
+                    try:
+                        shutil.copy2(query_path, ex_dir / "query.jpg")
+                        if ex["water_top1"]: shutil.copy2(ex["water_top1"], ex_dir / "water_top1.jpg")
+                        if ex["nowater_top1"]: shutil.copy2(ex["nowater_top1"], ex_dir / "nowater_top1.jpg")
+                    except Exception:
+                        pass
+                    
+                    w_status = "HIT" if ex['water_hit'] else "MISS"
+                    n_status = "HIT" if ex['nowater_hit'] else "MISS"
+                    
+                    create_comparison_figure_fixed(
+                        query_path, ex["water_top1"], ex["nowater_top1"],
+                        ex_dir / "comparison.png", 
+                        water_status=w_status,
+                        nowater_status=n_status,
+                        title=f"{base_cfg} | {ds_name} | Seed {seed}"
+                    )
+                    
+                    example_records.append({
+                        "base_config": base_cfg, "seed": seed, "dataset": ds_name, "type": ex_type,
+                        "water_result": w_status, "nowater_result": n_status,
+                        "example_dir": str(ex_dir.relative_to(output_dir))
+                    })
+
+                if model_w: del model_w
+                if model_n: del model_n
+                torch.cuda.empty_cache()
+
     examples_path = output_dir / "ab_query_examples.txt"
     with open(examples_path, 'w', encoding='utf-8') as f:
-        f.write("=" * 80 + "\n")
-        f.write("AB TEST: QUERY/RESULT EXAMPLES\n")
-        f.write("=" * 80 + "\n\n")
-        
-        # Summary statistics
-        if summary_df is not None and not summary_df.empty:
-            f.write("SUMMARY STATISTICS\n")
-            f.write("-" * 40 + "\n")
-            for _, row in summary_df.iterrows():
-                f.write(f"\nDataset: {row['dataset']}\n")
-                f.write(f"  Baseline (no water):  R1 = {row['nowater_r1_mean']:.4f}\n")
-                f.write(f"  With water removal:   R1 = {row['water_r1_mean']:.4f}\n")
-                f.write(f"  Absolute improvement: {row['absolute_improvement']:+.4f}\n")
-                f.write(f"  Relative improvement: {row['relative_improvement_pct']:+.2f}%\n")
-            f.write("\n" + "=" * 80 + "\n\n")
-        
-        # Key findings
-        improvements = [r for r in example_records if r["improvement"] == "YES"]
-        if improvements:
-            f.write("KEY FINDINGS: Cases where water removal IMPROVED Recall@1\n")
-            f.write("-" * 60 + "\n")
-            f.write("These are cases where the baseline (no water removal) failed to\n")
-            f.write("retrieve the correct match at rank 1, but the model trained with\n")
-            f.write("water removal succeeded. This suggests that removing water helps\n")
-            f.write("the model learn more discriminative features.\n\n")
-            
-            for rec in improvements[:5]:  # Top 5
-                f.write(f"\nExample: {rec['example_dir']}\n")
-                f.write(f"  Seed: {rec['seed']}, Dataset: {rec['dataset']}\n")
-                f.write(f"  Query: {rec['query_path']}\n")
-                f.write(f"  Result: Baseline={rec['nowater_result']}, Water-removed={rec['water_result']}\n")
-                f.write(f"  Interpretation: Removing water enabled correct retrieval.\n")
-        
-        # Full listing
-        f.write("\n\n" + "=" * 80 + "\n")
-        f.write("FULL LIST OF EXAMPLES\n")
+        f.write("AB TEST: QUERY EXAMPLES & ATTENTION MAPS DIRECTORIES\n")
         f.write("=" * 80 + "\n")
         for rec in example_records:
             f.write(f"\n{rec['example_dir']}\n")
-            f.write(f"  Seed {rec['seed']} | {rec['dataset']}\n")
-            f.write(f"  Query: {Path(rec['query_path']).name}\n")
-            f.write(f"  Water removal: {rec['water_result']} | Baseline: {rec['nowater_result']}\n")
-    
-    print(f"Examples report saved to {examples_path}")
-    print(f"Visual examples saved to {examples_dir}")
-    
-    # Final summary print
-    print("\n" + "=" * 80)
-    print("AB TEST REPORT GENERATION COMPLETE")
-    print("=" * 80)
-    print(f"Output directory: {output_dir}")
-    print(f"Files generated:")
-    for f in sorted(output_dir.rglob("*")):
-        if f.is_file():
-            print(f"  - {f.relative_to(output_dir)}")
+            f.write(f"  Config: {rec['base_config']} | Seed {rec['seed']} | {rec['dataset']}\n")
+            f.write(f"  Water: {rec['water_result']} | No-Water: {rec['nowater_result']}\n")
 
-
+    
 def main():
     config = PipelineConfig()
-    config.force_regenerate_place_ids = True
+    config.force_regenerate_place_ids = False
     config.DATAFRAMES_ROOT.mkdir(parents=True, exist_ok=True)
 
     DATA_CONFIG = [
@@ -850,35 +807,13 @@ def main():
                 )
                 uav_gen.generate_tiles()
 
-    base_exp = {
-        "max_epochs": 40,
-        "loss_name": "TripletMarginLoss",
-        "miner_name": "TripletMarginMiner",
-        "loss_margin": 0.05,
-        "miner_margin": 0.05,
-        "type_of_triplets": "all",
-        "swap": False,
-        "smooth_loss": False,
-        "agg_arch": "GeM",
-        "agg_config": {"p": 3, "eps": 1e-6},
-        "lr_sched": "warmup_cosine",
-        "lr_sched_args": {
-            "warmup_fraction": 0.05,
-            "eta_min_ratio": 0.01,
-        },
-    }
-
-    seeds = [42, 123, 999]
-    
-    # Helper to avoid repetition
     def make_experiments_for_config(base_name, cfg, seeds):
         exps = []
         for seed in seeds:
-            exps.append({**cfg, "name": f"{base_name}_WATER_s{seed}",  "seed": seed, "use_water_removal": True})
-            exps.append({**cfg, "name": f"{base_name}_NOWATER_s{seed}", "seed": seed, "use_water_removal": False})
+            exps.append({**cfg, "name": f"{base_name}_WATER_s{seed}",  "seed": seed, "use_water_removal": False})
+            exps.append({**cfg, "name": f"{base_name}_NOWATER_s{seed}", "seed": seed, "use_water_removal": True})
         return exps
 
-    # --- CONFIG 1: Contrastive + PairMargin + GeM + multistep ---
     cfg1 = {
         "max_epochs": 40, "batch_size": 32,
         "loss_name": "ContrastiveLoss", "miner_name": "PairMarginMiner",
@@ -889,7 +824,6 @@ def main():
         "lr_sched": "multistep", "lr_sched_args": {"milestones": [20, 30], "gamma": 0.1},
     }
 
-    # --- CONFIG 2: Contrastive + MSMiner + GeM + cosine ---
     cfg2 = {
         "max_epochs": 40, "batch_size": 32,
         "loss_name": "ContrastiveLoss", "miner_name": "MultiSimilarityMiner",
@@ -900,7 +834,6 @@ def main():
         "lr_sched": "cosine", "lr_sched_args": {"T_max": 35},
     }
 
-    # --- CONFIG 3: Triplet + TripletMiner + GeM + cosine ---
     cfg3 = {
         "max_epochs": 40, "batch_size": 32,
         "loss_name": "TripletMarginLoss", "miner_name": "TripletMarginMiner",
@@ -911,7 +844,6 @@ def main():
         "lr_sched": "cosine", "lr_sched_args": {"T_max": 35},
     }
 
-    # --- CONFIG 4: Triplet + TripletMiner + ConvAP + cosine ---
     cfg4 = {
         "max_epochs": 40, "batch_size": 32,
         "loss_name": "TripletMarginLoss", "miner_name": "TripletMarginMiner",
@@ -922,19 +854,43 @@ def main():
         "lr_sched": "cosine", "lr_sched_args": {"T_max": 35},
     }
 
+    seeds = [42, 123, 999]
     EXPERIMENTS = []
     EXPERIMENTS += make_experiments_for_config("C1_ContrastivePair_GeM", cfg1, seeds)
     EXPERIMENTS += make_experiments_for_config("C2_ContrastiveMS_GeM", cfg2, seeds)
     EXPERIMENTS += make_experiments_for_config("C3_TripletTriplet_GeM", cfg3, seeds)
     EXPERIMENTS += make_experiments_for_config("C4_TripletTriplet_ConvAP", cfg4, seeds)
 
-    print(f"Total experiments: {len(EXPERIMENTS)}")
-
+    RUN_VARIANT = "both"
+    if RUN_VARIANT == "water_only":
+        EXPERIMENTS = [e for e in EXPERIMENTS if e.get("use_water_removal", False)]
+    elif RUN_VARIANT == "nowater_only":
+        EXPERIMENTS = [e for e in EXPERIMENTS if not e.get("use_water_removal", True)]
+    
     logs_root = Path("./logs").resolve()
     logs_root.mkdir(parents=True, exist_ok=True)
-
+    
+    ab_results_path = logs_root / "ab_results.csv"
     all_results = []
     
+    if ab_results_path.exists():
+        try:
+            existing_df = pd.read_csv(ab_results_path)
+            all_results = existing_df.to_dict('records')
+            print(f"[RESUME] Loaded {len(all_results)} existing results from {ab_results_path.name}")
+        except Exception as e:
+            print(f"[WARN] Could not load existing results: {e}")
+            all_results = []
+    
+    SKIP_EXISTING_RUNS = True
+    if SKIP_EXISTING_RUNS and all_results:
+        done_names = {str(r.get('experiment', '')) for r in all_results}
+        original_count = len(EXPERIMENTS)
+        EXPERIMENTS = [e for e in EXPERIMENTS if e['name'] not in done_names]
+        skipped = original_count - len(EXPERIMENTS)
+        if skipped > 0:
+            print(f"[SKIP] {skipped} runs already done, {len(EXPERIMENTS)} remaining")
+
     for exp in EXPERIMENTS:
         train_csvs, val_csvs = ensure_place_ids_for_variant(
             config=config,
@@ -949,13 +905,12 @@ def main():
             val_csvs=val_csvs,
             logs_root=logs_root,
             config=config,
-            extract_attention=True,
-            num_attention_queries=3,
         )
         all_results.append(result)
         
-        pd.DataFrame(all_results).to_csv(logs_root / "ab_results.csv", index=False)
-        print(f"\nIntermediate summary saved to {logs_root / 'ab_results.csv'}")
+        pd.DataFrame(all_results).to_csv(ab_results_path, index=False)
+        remaining = len(EXPERIMENTS) - EXPERIMENTS.index(exp) - 1
+        print(f"\n[SAVE] Progress: {len(all_results)}/{len(all_results) + remaining} saved to {ab_results_path}")
 
     print("\n" + "=" * 100)
     print("ALL EXPERIMENTS FINISHED")
@@ -964,6 +919,8 @@ def main():
     generate_ab_report(
         logs_root=logs_root, 
         output_dir=logs_root / "report",
+        config=config,
+        data_config=DATA_CONFIG,
         num_examples=3
     )
 

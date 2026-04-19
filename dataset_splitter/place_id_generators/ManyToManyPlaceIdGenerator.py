@@ -89,10 +89,6 @@ class ManyToManyPlaceIdGenerator:
 
         return final_filtered_records
 
-    def _fit_informativeness_filter(self, paths):
-        n = min(200, len(paths))
-        sampled_paths = paths.sample(n=n)
-
     def generate_place_ids(self):
 
         if os.path.exists(self.csv_place_ids_output_path):
@@ -136,7 +132,7 @@ class ManyToManyPlaceIdGenerator:
 
         if self.use_informativeness_filter:
             print(" -> Informativeness filter (water removal) ENABLED")
-            self._fit_informativeness_filter(uav_records["img_path"])
+            # self._fit_informativeness_filter(uav_records["img_path"])
 
             if self.is_non_overlaping_uavs and not self.is_validation_set:
                 uav_records = self.get_non_overlapping_uavs(
