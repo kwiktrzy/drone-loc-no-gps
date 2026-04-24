@@ -25,6 +25,7 @@ class ManyToManyPlaceIdGenerator:
         is_non_overlaping_uavs=True,
 
         use_informativeness_filter=True,
+        uav_overlap_multiplier: float = 1.0 
     ):
         self.radius_neighbors_meters = radius_neighbors_meters
         self.top_n_neighbors = top_n_neighbors
@@ -43,6 +44,7 @@ class ManyToManyPlaceIdGenerator:
         self.tiles_trash_directory.mkdir(parents=True, exist_ok=True)
         
         self.use_informativeness_filter = use_informativeness_filter
+        self.uav_overlap_multiplier = uav_overlap_multiplier
         
 
     def __utm_to_columns(self, row):
@@ -50,11 +52,9 @@ class ManyToManyPlaceIdGenerator:
         return {"e_utm": utm_cords.e, "n_utm": utm_cords.n, "zone_utm": utm_cords.zone}
 
     def get_non_overlapping_uavs(
-        self, df_tiles, uav_records, radius_meters: float
+        self, df_tiles, uav_records, radius_meters: float, apply_info_filter: bool = True
     ) -> pd.DataFrame:
-
         if uav_records.empty:
-            print(f"Error: do not find any rows UAV.")
             return pd.DataFrame()
 
         original_indices = uav_records.index
@@ -62,7 +62,6 @@ class ManyToManyPlaceIdGenerator:
         uav_coords = uav_records[["e_utm", "n_utm"]].to_numpy()
 
         if uav_coords.shape[0] == 0:
-            print(f" ERROR: Do not find any rows UAV.")
             return pd.DataFrame()
 
         nn_r = NearestNeighbors(radius=radius_meters, algorithm="kd_tree")
@@ -71,21 +70,37 @@ class ManyToManyPlaceIdGenerator:
 
         indices_to_skip = set()
         iloc_indices_to_keep = []
+        discarded_log = []
+        
         for i in range(len(uav_records)):
-            result = self.informativeness_calculation.analyze(
-                uav_records.iloc[i]["img_path"]
-            )
-            if not result.is_informative:
-                shutil.copy2(uav_records.iloc[i]["img_path"], self.tiles_trash_directory)
-                print(f"✗ REJECT: {result.details}")
-                continue
+            if apply_info_filter:
+                result = self.informativeness_calculation.analyze(uav_records.iloc[i]["img_path"])
+                if not result.is_informative:
+                    shutil.copy2(uav_records.iloc[i]["img_path"], self.tiles_trash_directory)
+                    discarded_log.append({
+                        "img_path": uav_records.iloc[i]["img_path"],
+                        "friendly-name": uav_records.iloc[i]["friendly-name"],
+                        "reason": "WATER_FILTER"
+                    })
+                    continue
+            
             if i in indices_to_skip:
+                discarded_log.append({
+                    "img_path": uav_records.iloc[i]["img_path"],
+                    "friendly-name": uav_records.iloc[i]["friendly-name"],
+                    "reason": "OVERLAP"
+                })
                 continue
+                
             iloc_indices_to_keep.append(i)
             indices_to_skip.update(indices_r[i])
 
         original_indices_to_keep = original_indices[iloc_indices_to_keep]
         final_filtered_records = df_tiles.loc[original_indices_to_keep].copy()
+
+        if discarded_log:
+            debug_csv_path = str(self.csv_place_ids_output_path).replace(".csv", "_discarded_debug.csv")
+            pd.DataFrame(discarded_log).to_csv(debug_csv_path, index=False)
 
         return final_filtered_records
 
@@ -130,29 +145,31 @@ class ManyToManyPlaceIdGenerator:
         ].copy()
 
 
-        if self.use_informativeness_filter:
-            print(" -> Informativeness filter (water removal) ENABLED")
-            # self._fit_informativeness_filter(uav_records["img_path"])
-
-            if self.is_non_overlaping_uavs and not self.is_validation_set:
-                uav_records = self.get_non_overlapping_uavs(
-                    df, uav_records, self.radius_neighbors_meters
-                )
-            else:
+        if self.is_non_overlaping_uavs and not self.is_validation_set:
+            overlap_radius = int(self.radius_neighbors_meters * self.uav_overlap_multiplier)
+            
+            print(f" -> Non-overlapping UAV filter ENABLED (UAV-UAV: {overlap_radius}m | UAV-SAT parsing: {self.radius_neighbors_meters}m)")
+            uav_records = self.get_non_overlapping_uavs(
+                df, 
+                uav_records, 
+                overlap_radius,
+                apply_info_filter=self.use_informativeness_filter
+            )
+        else:
+            if self.use_informativeness_filter:
+                print(" -> Informativeness filter (water removal) ENABLED (Validation mode)")
                 indices_to_drop = []
                 for index, row in uav_records.iterrows():
                     result = self.informativeness_calculation.analyze(row["img_path"])
                     if not result.is_informative:
                         try:
                             shutil.copy2(row["img_path"], self.tiles_trash_directory)
-                            print(f"✗ REJECT: {result.details}")
                         except Exception as e:
-                            print(f"Warning: Could not copy file to trash: {e}")
+                            pass
                         indices_to_drop.append(index)
-                
                 uav_records = uav_records.drop(indices_to_drop)
-        else:
-            print(" -> Informativeness filter (water removal) DISABLED. Keeping all UAV tiles.")
+            else:
+                print(" -> Informativeness filter (water removal) DISABLED. Keeping all UAV tiles.")
 
         if self.is_validation_set and not self.is_validation_set_v2:
             print(" -> MODE: Validation (query: SAT, Neighbor: UAV)")

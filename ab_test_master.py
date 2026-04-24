@@ -176,8 +176,9 @@ def score_to_float(x):
 def ensure_place_ids_for_variant(
     config: PipelineConfig,
     data_config: List[dict],
-    use_water_removal: bool,  # True = NO_WATER (usuwamy wodę), False = WATER (zostawiamy wodę)
-    force_regenerate: bool = False
+    use_water_removal: bool,
+    force_regenerate: bool = False,
+    uav_overlap_multiplier: float = 1.0
 ) -> tuple[List[str], List[str]]:
 
     water_tag = "water_removed" if use_water_removal else "water_kept"
@@ -192,13 +193,15 @@ def ensure_place_ids_for_variant(
         
         is_val = d_conf["set_type"] == "val"
         
+        overlap_tag = "" if uav_overlap_multiplier == 1.0 else f"_smov{int(d_conf['crop_range_meters'] * uav_overlap_multiplier)}m"
+        
         # Validation sets always NO_WATER
         if is_val:
             final_suffix = f"{d_conf['output_suffix']}_FIXED_NO_WATER"
             use_filter_for_this = True
             water_tag_for_file = "fixed_no_water"
         else:
-            final_suffix = f"{d_conf['output_suffix']}_{water_tag}"
+            final_suffix = f"{d_conf['output_suffix']}_{water_tag}{overlap_tag}"
             use_filter_for_this = use_water_removal
             water_tag_for_file = water_tag
         
@@ -222,6 +225,7 @@ def ensure_place_ids_for_variant(
                 radius_neighbors_meters=70 if is_val else d_conf["crop_range_meters"],
                 tiles_trash_directory=config.DATAFRAMES_TILES_TRASH,
                 use_informativeness_filter=use_filter_for_this,
+                uav_overlap_multiplier=uav_overlap_multiplier,
             )
             generator.generate_place_ids()
         else:
@@ -466,7 +470,7 @@ def generate_ab_report(logs_root: Path, output_dir: Path, config: PipelineConfig
 
     df = pd.read_csv(results_csv)
     
-    df['base_config'] = df['experiment'].str.replace(r'_(WATER|NOWATER)_s\d+$', '', regex=True)
+    df['base_config'] = df['experiment'].str.replace(r'_(WATER|NOWATER(_SMOV)?)_s\d+$', '', regex=True)
     
     rows = []
     for _, row in df.iterrows():
@@ -539,7 +543,7 @@ def generate_ab_report(logs_root: Path, output_dir: Path, config: PipelineConfig
     examples_dir = output_dir / "query_examples"
     examples_dir.mkdir(exist_ok=True)
 
-    _, val_csvs_fixed = ensure_place_ids_for_variant(config, data_config, use_water_removal=True) # flaga nie ma znaczenia dla val, i tak wymusi FIXED_NO_WATER
+    _, val_csvs_fixed = ensure_place_ids_for_variant(config, data_config, use_water_removal=True)
     dm_fixed = MapsDataModule(tiles_csv_file_paths=[], batch_size=1, val_set_names=val_csvs_fixed, shuffle_all=False)
     
     ds_map_fixed = {Path(p).stem.replace("_FIXED_NO_WATER", ""): ds for p, ds in zip(dm_fixed.val_set_names, dm_fixed.val_datasets)}
@@ -549,7 +553,7 @@ def generate_ab_report(logs_root: Path, output_dir: Path, config: PipelineConfig
         run_dir = Path(row["run_dir"])
         for pf in run_dir.glob("predictions_*.json"):
             raw_name = pf.stem.replace("predictions_", "")
-            ds_name = raw_name.replace("_FIXED_NO_WATER", "") # Normalizacja nazwy
+            ds_name = raw_name.replace("_FIXED_NO_WATER", "")
             
             key = (row["seed"], row["use_water_removal"], ds_name)
             with open(pf, 'r', encoding='utf-8') as f:
@@ -581,7 +585,7 @@ def generate_ab_report(logs_root: Path, output_dir: Path, config: PipelineConfig
                     continue
 
                 lookup_key = ds_name.replace("_FIXED_NO_WATER", "")
-                ds_obj = ds_map_fixed.get(lookup_key) # Jeden wspólny dataset
+                ds_obj = ds_map_fixed.get(lookup_key)
                 
                 df_w = df[(df["base_config"] == base_cfg) & (df["seed"] == seed) & (df["use_water_removal"] == False)]
                 df_n = df[(df["base_config"] == base_cfg) & (df["seed"] == seed) & (df["use_water_removal"] == True)]
@@ -812,6 +816,7 @@ def main():
         for seed in seeds:
             exps.append({**cfg, "name": f"{base_name}_WATER_s{seed}",  "seed": seed, "use_water_removal": False})
             exps.append({**cfg, "name": f"{base_name}_NOWATER_s{seed}", "seed": seed, "use_water_removal": True})
+            exps.append({**cfg, "name": f"{base_name}_NOWATER_SMOV_s{seed}", "seed": seed, "use_water_removal": True, "uav_overlap_multiplier": 0.75})
         return exps
 
     cfg1 = {
@@ -882,6 +887,22 @@ def main():
             print(f"[WARN] Could not load existing results: {e}")
             all_results = []
     
+    print("\n[PRE-GEN] NO FILTER")
+    ensure_place_ids_for_variant(
+        config=config,
+        data_config=DATA_CONFIG,
+        use_water_removal=False, 
+        force_regenerate=True 
+    )
+
+    print("\n[PRE-GEN] FILTER.")
+    ensure_place_ids_for_variant(
+        config=config,
+        data_config=DATA_CONFIG,
+        use_water_removal=True, 
+        force_regenerate=True
+    )
+
     SKIP_EXISTING_RUNS = True
     if SKIP_EXISTING_RUNS and all_results:
         done_names = {str(r.get('experiment', '')) for r in all_results}
@@ -897,6 +918,7 @@ def main():
             data_config=DATA_CONFIG,
             use_water_removal=exp["use_water_removal"],
             force_regenerate=config.force_regenerate_place_ids,
+            uav_overlap_multiplier=exp.get("uav_overlap_multiplier", 1.0)
         )
         
         result = run_experiment(
