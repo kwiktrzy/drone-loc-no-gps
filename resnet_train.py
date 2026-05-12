@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Tuple, Dict
 import gc
 import json
 import os
@@ -7,15 +7,27 @@ import inspect
 import copy
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytorch_lightning as pl
 import torch
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from PIL import Image
 
 from dataloaders.MapsDataloader import MapsDataModule
-from dataset_splitter.place_id_generators.ManyToManyPlaceIdGenerator import ManyToManyPlaceIdGenerator
+from dataset_splitter.place_id_generators.ManyToManyPlaceIdGenerator import (
+    ManyToManyPlaceIdGenerator,
+)
 from dataset_splitter.structs.MapSatellite import MapSatellite
-from dataset_splitter.satellite_generators.OverlapingTilesGenerator import OverlapingTilesGenerator
-from dataset_splitter.uav_generators.UavSmallerCropGenerator import UavSmallerCropGenerator
+from dataset_splitter.satellite_generators.OverlapingTilesGenerator import (
+    OverlapingTilesGenerator,
+)
+from dataset_splitter.uav_generators.UavSmallerCropGenerator import (
+    UavSmallerCropGenerator,
+)
 from vpr_model import VPRModel
 
 
@@ -111,10 +123,10 @@ def build_callbacks(run_dir: Path):
         mode="max",
     )
 
-    checkpoint_min = pl.callbacks.ModelCheckpoint(
+    checkpoint_shandan_v2 = pl.callbacks.ModelCheckpoint(
         dirpath=str(ckpt_dir),
-        monitor="val_min_R1_4sets",
-        filename="best_min-{epoch:02d}-{val_min_R1_4sets:.4f}",
+        monitor="Shandan-v2_one_to_one/R1",
+        filename="best_shandan_v2-{epoch:02d}-{Shandan-v2_one_to_one/R1:.4f}",
         auto_insert_metric_name=False,
         save_weights_only=True,
         save_top_k=1,
@@ -122,10 +134,10 @@ def build_callbacks(run_dir: Path):
         mode="max",
     )
 
-    checkpoint_shandan_v1 = pl.callbacks.ModelCheckpoint(
+    checkpoint_changjiang_v2 = pl.callbacks.ModelCheckpoint(
         dirpath=str(ckpt_dir),
-        monitor="Shandan-v1_one_to_one/R1",
-        filename="best_shandan_v1-{epoch:02d}-{Shandan-v1_one_to_one/R1:.4f}",
+        monitor="Changjiang-23-v2_one_to_one/R1",
+        filename="best_changjiang_v2-{epoch:02d}-{Changjiang-23-v2_one_to_one/R1:.4f}",
         auto_insert_metric_name=False,
         save_weights_only=True,
         save_top_k=1,
@@ -133,29 +145,11 @@ def build_callbacks(run_dir: Path):
         mode="max",
     )
 
-    checkpoint_changjiang_v1 = pl.callbacks.ModelCheckpoint(
-        dirpath=str(ckpt_dir),
-        monitor="Changjiang-23-v1_one_to_one/R1",
-        filename="best_changjiang_v1-{epoch:02d}-{Changjiang-23-v1_one_to_one/R1:.4f}",
-        auto_insert_metric_name=False,
-        save_weights_only=True,
-        save_top_k=1,
-        save_last=False,
-        mode="max",
-    )
-
-    callbacks = [
-        checkpoint_mean,
-        checkpoint_min,
-        checkpoint_shandan_v1,
-        checkpoint_changjiang_v1,
-    ]
-
+    callbacks = [checkpoint_mean, checkpoint_shandan_v2, checkpoint_changjiang_v2]
     cb_map = {
         "mean": checkpoint_mean,
-        "min": checkpoint_min,
-        "shandan_v1": checkpoint_shandan_v1,
-        "changjiang_v1": checkpoint_changjiang_v1,
+        "shandan_v2": checkpoint_shandan_v2,
+        "changjiang_v2": checkpoint_changjiang_v2,
     }
     return callbacks, cb_map
 
@@ -168,11 +162,660 @@ def score_to_float(x):
     return float(x)
 
 
+# ====================================================================
+#  PLACE ID GENERATION
+# ====================================================================
+
+
+def generate_place_ids_for_variant(
+    config: PipelineConfig,
+    data_config: List[dict],
+    use_informativeness_filter: bool = True,
+    uav_overlap_multiplier: float = 1.0,
+) -> Tuple[List[str], List[str]]:
+    """
+    Generates (or loads) CSV files with the place_id for a given variant.
+    Returns lists of train/val paths.
+    """
+    train_csvs: List[str] = []
+    val_csvs: List[str] = []
+
+    print(
+        f"\n=== Generating Place IDs (filter={use_informativeness_filter}, "
+        f"overlap_mult={uav_overlap_multiplier}) ==="
+    )
+
+    for d_conf in data_config:
+        region_name = d_conf["region_name"]
+        base_path = str(config.DATAFRAMES_ONE_TO_ONE_DIR / f"{region_name}.csv")
+        final_path = get_processed_path(base_path, d_conf["output_suffix"])
+
+        is_val = d_conf.get("set_type") == "val"
+        need_generate = (
+            config.force_regenerate_place_ids or not Path(final_path).exists()
+        )
+
+        if need_generate:
+            print(f"  [GENERATING] {region_name} -> {Path(final_path).name}")
+            generator = ManyToManyPlaceIdGenerator(
+                csv_tiles_path=base_path,
+                csv_place_ids_output_path=final_path,
+                force_regenerate=True,
+                is_validation_set=is_val,
+                is_validation_set_v2=d_conf.get("val_variant") == "v2",
+                radius_neighbors_meters=70 if is_val else d_conf["crop_range_meters"],
+                tiles_trash_directory=config.DATAFRAMES_TILES_TRASH,
+                use_informativeness_filter=use_informativeness_filter,
+                uav_overlap_multiplier=uav_overlap_multiplier,
+            )
+            generator.generate_place_ids()
+        else:
+            print(f"  [EXISTS]    {region_name} -> {Path(final_path).name}")
+
+        if d_conf["set_type"] == "train":
+            train_csvs.append(final_path)
+        elif d_conf["set_type"] == "val":
+            val_csvs.append(final_path)
+
+    return train_csvs, val_csvs
+
+
+# ====================================================================
+#  TRAINING
+# ====================================================================
+
+
+def run_single_experiment(
+    exp: dict, train_csvs: List[str], val_csvs: List[str], logs_root: Path
+) -> dict:
+
+    print("\n" + "=" * 100)
+    print(f"EXPERIMENT: {exp['name']}")
+    print(f"  Seed: {exp['seed']}")
+    print(f"  LR: {exp.get('lr', 0.03)}")
+    print(f"  Agg: {exp.get('agg_arch')}")
+    print("=" * 100)
+
+    pl.seed_everything(exp["seed"], workers=True)
+
+    run_dir = (logs_root / exp["name"]).resolve()
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    metrics_jsonl = run_dir / "val_metrics.jsonl"
+    if metrics_jsonl.exists():
+        metrics_jsonl.unlink()
+
+    with open(run_dir / "experiment_config.json", "w", encoding="utf-8") as f:
+        json.dump(exp, f, indent=2)
+
+    datamodule = MapsDataModule(
+        tiles_csv_file_paths=train_csvs,
+        batch_size=exp.get("batch_size", 32),
+        val_set_names=val_csvs,
+        shuffle_all=True,
+    )
+
+    valid_model_args = inspect.signature(VPRModel.__init__).parameters.keys()
+    model_kwargs = {k: v for k, v in exp.items() if k in valid_model_args}
+    model = VPRModel(**model_kwargs)
+
+    model.save_val_predictions = False
+    model.run_dir = str(run_dir)
+
+    callbacks, cb_map = build_callbacks(run_dir)
+
+    old_cwd = os.getcwd()
+    os.chdir(run_dir)
+
+    try:
+        trainer = pl.Trainer(
+            accelerator="gpu",
+            devices=1,
+            default_root_dir=".",
+            num_nodes=1,
+            num_sanity_val_steps=0,
+            precision="32",
+            max_epochs=exp["max_epochs"],
+            check_val_every_n_epoch=1,
+            callbacks=callbacks,
+            reload_dataloaders_every_n_epochs=1,
+            log_every_n_steps=10,
+            gradient_clip_algorithm="norm",
+            gradient_clip_val=1.0,
+        )
+
+        trainer.fit(model=model, datamodule=datamodule)
+
+        best_mean_path = cb_map["mean"].best_model_path
+        best_mean_score = score_to_float(cb_map["mean"].best_model_score)
+
+        result = {
+            "experiment": exp["name"],
+            "seed": exp["seed"],
+            "lr": exp.get("lr", 0.03),
+            "agg_arch": exp.get("agg_arch"),
+            "best_mean_score": best_mean_score,
+            "best_mean_path": str(best_mean_path) if best_mean_path else None,
+            "run_dir": str(run_dir),
+            "max_epochs": exp["max_epochs"],
+        }
+
+        if metrics_jsonl.exists():
+            with open(metrics_jsonl, "r", encoding="utf-8") as f:
+                lines = [json.loads(l) for l in f if l.strip()]
+            if lines:
+                last = lines[-1]
+                result["best_epoch"] = last.get("epoch")
+                result["datasets"] = last.get("datasets", {})
+
+        return result
+
+    except Exception as e:
+        print(f"\n[ERROR] Experiment {exp['name']} failed: {e}")
+        return {
+            "experiment": exp["name"],
+            "seed": exp["seed"],
+            "error": str(e),
+            "run_dir": str(run_dir),
+        }
+
+    finally:
+        os.chdir(old_cwd)
+        try:
+            del trainer, model, datamodule
+        except NameError:
+            pass
+        torch.cuda.empty_cache()
+        gc.collect()
+
+
+# ====================================================================
+#  COMPARISON REPORT
+# ====================================================================
+
+
+def load_val_datasets_once(val_csvs: List[str]) -> Dict[str, object]:
+    dm = MapsDataModule(
+        tiles_csv_file_paths=[],
+        batch_size=1,
+        val_set_names=val_csvs,
+        shuffle_all=False,
+    )
+    dm.setup("validate")
+
+    ds_map = {}
+    for path, ds in zip(dm.val_set_names, dm.val_datasets):
+        short_name = Path(path).stem
+        ds_map[short_name] = ds
+    return ds_map
+
+
+def load_experiment_predictions(
+    experiments: List[dict], logs_root: Path
+) -> Dict[tuple, dict]:
+    """
+    key: (exp_name, dataset_short_name)
+    """
+    all_preds = {}
+    for exp in experiments:
+        run_dir = logs_root / exp["name"]
+        if not run_dir.exists():
+            continue
+        for pred_file in run_dir.glob("predictions_*.json"):
+            ds_name = pred_file.stem.replace("predictions_", "")
+            key = (exp["name"], ds_name)
+            with open(pred_file, "r", encoding="utf-8") as f:
+                all_preds[key] = json.load(f)
+    return all_preds
+
+
+def find_divergent_and_consensus(
+    predictions_by_model: Dict[str, dict],
+    num_divergent: int = 10,
+    num_consensus: int = 5,
+) -> Tuple[list, list]:
+    """
+    For a single validation set, it compares the predictions of all models.
+    Returns (divergent_queries, consensus_queries).
+
+    Divergent: The top-1 result differs from at least two other models.
+    Consensus: All models hit the top 1 (or all missed).
+    """
+    model_names = sorted(predictions_by_model.keys())
+    if len(model_names) < 2:
+        return [], []
+
+    model_qmaps = {}
+    for mname in model_names:
+        preds = predictions_by_model[mname]
+        qmap = {q["query_path"]: q for q in preds.get("queries", [])}
+        model_qmaps[mname] = qmap
+
+    common_paths = set(model_qmaps[model_names[0]].keys())
+    for mname in model_names[1:]:
+        common_paths &= set(model_qmaps[mname].keys())
+
+    divergent = []
+    consensus_hits = []
+
+    for qpath in common_paths:
+        top1s = {}
+        hits = {}
+        for mname in model_names:
+            q = model_qmaps[mname][qpath]
+            top1_path = q.get("top5_paths", [None])[0] if q.get("top5_paths") else None
+            top1s[mname] = top1_path
+            hits[mname] = q.get("is_hit_r1", False)
+
+        unique_top1s = set(t for t in top1s.values() if t is not None)
+
+        entry = {
+            "query_path": qpath,
+            "top1s": top1s,
+            "hits": hits,
+        }
+
+        if len(unique_top1s) >= 2:
+            divergent.append(entry)
+        elif all(hits.values()) or not any(hits.values()):
+            consensus_hits.append(entry)
+
+    divergent.sort(
+        key=lambda e: len(set(t for t in e["top1s"].values() if t)), reverse=True
+    )
+
+    return divergent[:num_divergent], consensus_hits[:num_consensus]
+
+
+def create_multimodel_comparison_figure(
+    query_path: str,
+    model_top1s: Dict[str, str],
+    model_hits: Dict[str, str],
+    model_names_ordered: list,
+    output_path: Path,
+    title: str = "",
+):
+    """
+    Jedna duża figura: Query + overlay per model w jednym rzędzie.
+    Format: [Query] [Model1_overlay] [Model2_overlay] ... [ModelN_overlay]
+    """
+    try:
+        n_models = len(model_names_ordered)
+        n_cols = 1 + n_models  # query + modeli
+        fig, axes = plt.subplots(1, n_cols, figsize=(4 * n_cols, 5))
+
+        if n_cols == 1:
+            axes = [axes]
+
+        # Query
+        if os.path.exists(query_path):
+            img_q = Image.open(query_path).convert("RGB")
+            axes[0].imshow(img_q)
+        axes[0].set_title("Query (UAV)", fontweight="bold", fontsize=10)
+        axes[0].axis("off")
+
+        # Modele
+        for i, mname in enumerate(model_names_ordered):
+            ax = axes[i + 1]
+            top1_path = model_top1s.get(mname)
+            hit = model_hits.get(mname, False)
+            status = "HIT" if hit else "MISS"
+
+            if top1_path and os.path.exists(top1_path):
+                img = Image.open(top1_path).convert("RGB")
+                ax.imshow(img)
+            else:
+                ax.text(0.5, 0.5, "N/A", ha="center", va="center", fontsize=14)
+
+            color = "green" if hit else "red"
+            ax.set_title(
+                f"{mname}\n{status}", fontsize=9, color=color, fontweight="bold"
+            )
+            ax.axis("off")
+
+        if title:
+            fig.suptitle(title, fontsize=12, fontweight="bold")
+
+        plt.tight_layout()
+        plt.savefig(output_path, dpi=150, bbox_inches="tight", facecolor="white")
+        plt.close()
+        return True
+
+    except Exception as e:
+        print(f"[ERROR] create_multimodel_comparison_figure: {e}")
+        plt.close("all")
+        return False
+
+
+def create_multimodel_heatmap_figure(
+    query_path: str,
+    model_attn_paths: Dict[str, str],
+    model_names_ordered: list,
+    output_path: Path,
+    title: str = "",
+):
+    """
+    Jedna duża figura: Query + heatmap overlay per model w jednym rzędzie.
+    Wygenerowana przez extract_attention_single_image z VPRModel.
+    """
+    try:
+        n_models = len(model_names_ordered)
+        n_cols = 1 + n_models
+        fig, axes = plt.subplots(1, n_cols, figsize=(4 * n_cols, 5))
+
+        if n_cols == 1:
+            axes = [axes]
+
+        # Query
+        if os.path.exists(query_path):
+            img_q = Image.open(query_path).convert("RGB")
+            axes[0].imshow(img_q)
+        axes[0].set_title("Query (UAV)", fontweight="bold", fontsize=10)
+        axes[0].axis("off")
+
+        # Heatmapy per model
+        for i, mname in enumerate(model_names_ordered):
+            ax = axes[i + 1]
+            attn_path = model_attn_paths.get(mname)
+
+            if attn_path and os.path.exists(attn_path):
+                img = Image.open(attn_path).convert("RGB")
+                ax.imshow(img)
+                ax.set_title(f"{mname}\nAttention", fontsize=9, fontweight="bold")
+            else:
+                ax.text(0.5, 0.5, "No attention", ha="center", va="center", fontsize=12)
+                ax.set_title(f"{mname}\nN/A", fontsize=9)
+
+            ax.axis("off")
+
+        if title:
+            fig.suptitle(title, fontsize=12, fontweight="bold")
+
+        plt.tight_layout()
+        plt.savefig(output_path, dpi=150, bbox_inches="tight", facecolor="white")
+        plt.close()
+        return True
+
+    except Exception as e:
+        print(f"[ERROR] create_multimodel_heatmap_figure: {e}")
+        plt.close("all")
+        return False
+
+
+def run_final_validations(
+    experiments: List[dict],
+    logs_root: Path,
+    val_csvs: List[str],
+    ds_map: Dict[str, object],
+) -> Dict[str, VPRModel]:
+    """
+    Dla każdego eksperymentu: ładuje best checkpoint, odpala final validation
+    z save_val_predictions=True. Zwraca załadowane modele (potrzebne do heatmap).
+    """
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    loaded_models = {}
+
+    for exp in experiments:
+        exp_name = exp["name"]
+        run_dir = logs_root / exp_name
+        summary_path = run_dir / "summary.json"
+
+        # Wczytaj zapisane metryki z treningu
+        if not summary_path.exists():
+            print(f"[SKIP] No summary for {exp_name}")
+            continue
+        with open(summary_path, "r", encoding="utf-8") as f:
+            summary = json.load(f)
+
+        best_path = summary.get("best_mean_path")
+        if not best_path or not Path(best_path).exists():
+            print(f"[SKIP] No checkpoint for {exp_name}")
+            continue
+
+        # Sprawdź czy predictions już istnieją (nie waliduj ponownie)
+        all_preds_exist = True
+        for ds_name in ds_map:
+            pred_file = run_dir / f"predictions_{ds_name}.json"
+            if not pred_file.exists():
+                all_preds_exist = False
+                break
+
+        if all_preds_exist:
+            print(f"[SKIP] Predictions already exist for {exp_name}")
+            model = VPRModel.load_from_checkpoint(best_path, strict=True)
+            model.to(device)
+            model.eval()
+            loaded_models[exp_name] = model
+            continue
+
+        # Final validation
+        print(f"\n[FINAL VAL] {exp_name}")
+        model = VPRModel.load_from_checkpoint(best_path, strict=True)
+        model.save_val_predictions = True
+        model.run_dir = str(run_dir)
+        model.is_final_validation = True
+        model.to(device)
+        model.eval()
+
+        val_dm = MapsDataModule(
+            tiles_csv_file_paths=[],
+            batch_size=1,
+            val_set_names=val_csvs,
+            shuffle_all=False,
+        )
+
+        val_trainer = pl.Trainer(
+            accelerator="gpu",
+            devices=1,
+            num_sanity_val_steps=0,
+            precision="32",
+        )
+        val_dm.setup("validate")
+
+        val_trainer.validate(model, datamodule=val_dm)
+        del val_trainer, val_dm
+        torch.cuda.empty_cache()
+
+        loaded_models[exp_name] = model
+
+    return loaded_models
+
+
+def generate_comparison_report(
+    experiments: List[dict],
+    logs_root: Path,
+    val_csvs: List[str],
+    num_divergent: int = 10,
+    num_consensus: int = 5,
+):
+
+    report_dir = logs_root / "comparison_report"
+    report_dir.mkdir(parents=True, exist_ok=True)
+
+    print("\n[REPORT] Loading validation datasets...")
+    ds_map = load_val_datasets_once(val_csvs)
+    print(f"  Loaded {len(ds_map)} validation datasets: {list(ds_map.keys())}")
+
+    print("\n[REPORT] Running final validations...")
+    loaded_models = run_final_validations(experiments, logs_root, val_csvs, ds_map)
+
+    if not loaded_models:
+        print("[ERROR] No models loaded. Aborting report.")
+        return
+
+    print("\n[REPORT] Loading predictions...")
+    all_preds = load_experiment_predictions(experiments, logs_root)
+    print(f"  Found {len(all_preds)} prediction files")
+
+    print("\n[REPORT] Building summary table...")
+    summary_rows = []
+    for exp in experiments:
+        exp_name = exp["name"]
+        run_dir = logs_root / exp_name
+        summary_file = run_dir / "summary.json"
+
+        if not summary_file.exists():
+            continue
+
+        with open(summary_file, "r", encoding="utf-8") as f:
+            s = json.load(f)
+
+        row = {
+            "experiment": exp_name,
+            "agg_arch": exp.get("agg_arch", "?"),
+            "lr": exp.get("lr", 0.03),
+            "loss_name": exp.get("loss_name", "?"),
+            "best_mean_R1": s.get("best_mean_score"),
+            "best_epoch": s.get("best_epoch"),
+        }
+
+        for ds_name, ds_metrics in s.get("datasets", {}).items():
+            short = ds_name.split("/")[0] if "/" in ds_name else ds_name
+            for metric_name in ["R1", "R5", "R10"]:
+                if metric_name in ds_metrics:
+                    row[f"{short}_{metric_name}"] = ds_metrics[metric_name]
+
+        summary_rows.append(row)
+
+    if summary_rows:
+        summary_df = pd.DataFrame(summary_rows)
+        summary_path = report_dir / "comparison_summary.csv"
+        summary_df.to_csv(summary_path, index=False)
+        print(f"  Summary saved to {summary_path}")
+
+    print("\n[REPORT] Finding divergent queries and generating heatmaps...")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    examples_dir = report_dir / "query_examples"
+    examples_dir.mkdir(exist_ok=True)
+
+    model_names_ordered = sorted(loaded_models.keys())
+    all_example_records = []
+
+    for ds_short_name in ds_map:
+        print(f"\n  Dataset: {ds_short_name}")
+
+        # Zbierz predykcje wszystkich modeli dla tego datasetu
+        preds_for_ds = {}
+        for exp_name in model_names_ordered:
+            key = (exp_name, ds_short_name)
+            if key in all_preds:
+                preds_for_ds[exp_name] = all_preds[key]
+
+        if len(preds_for_ds) < 2:
+            print(f"    [SKIP] Need at least 2 models, have {len(preds_for_ds)}")
+            continue
+
+        divergent, consensus = find_divergent_and_consensus(
+            preds_for_ds,
+            num_divergent=num_divergent,
+            num_consensus=num_consensus,
+        )
+
+        print(f"    Divergent: {len(divergent)}, Consensus: {len(consensus)}")
+
+        selected = divergent[:num_divergent]
+        if len(selected) < num_divergent:
+            selected.extend(consensus[: num_divergent - len(selected)])
+
+        if not selected:
+            print(f"    [SKIP] No interesting queries found")
+            continue
+
+        for idx, q_entry in enumerate(selected):
+            q_type = "divergent" if q_entry in divergent else "consensus"
+            q_path = q_entry["query_path"]
+            q_name = Path(q_path).stem
+
+            ex_dir = (
+                examples_dir / f"{ds_short_name}_{q_type}_{idx+1:02d}_{q_name[:40]}"
+            )
+            ex_dir.mkdir(exist_ok=True)
+
+            # --- Top-1 comprizon (figure with orginal + top1 per model) ---
+            create_multimodel_comparison_figure(
+                query_path=q_path,
+                model_top1s=q_entry["top1s"],
+                model_hits=q_entry["hits"],
+                model_names_ordered=model_names_ordered,
+                output_path=ex_dir / "comparison_top1.png",
+                title=f"{ds_short_name} | {q_type} #{idx+1}",
+            )
+
+            # --- Heatmapy attention per model ---
+            attn_paths = {}
+            for mname in model_names_ordered:
+                if mname not in loaded_models:
+                    continue
+                attn_dir = ex_dir / f"attn_{mname}"
+                try:
+                    loaded_models[mname].extract_attention_single_image(
+                        val_dataset=ds_map[ds_short_name],
+                        image_path=q_path,
+                        device=device,
+                        output_dir=str(attn_dir),
+                    )
+                    generated = list(attn_dir.glob("*_attention.png"))
+                    if generated:
+                        attn_paths[mname] = str(generated[0])
+                except Exception as e:
+                    print(f"      [WARN] Attention extraction failed for {mname}: {e}")
+
+            if attn_paths:
+                create_multimodel_heatmap_figure(
+                    query_path=q_path,
+                    model_attn_paths=attn_paths,
+                    model_names_ordered=model_names_ordered,
+                    output_path=ex_dir / "comparison_heatmaps.png",
+                    title=f"{ds_short_name} | Attention | {q_type} #{idx+1}",
+                )
+
+            try:
+                shutil.copy2(q_path, ex_dir / "query.jpg")
+            except Exception:
+                pass
+
+            record = {
+                "dataset": ds_short_name,
+                "type": q_type,
+                "index": idx + 1,
+                "query_path": q_path,
+                "example_dir": str(ex_dir.relative_to(report_dir)),
+            }
+            for mname in model_names_ordered:
+                record[f"{mname}_hit"] = q_entry["hits"].get(mname, False)
+                record[f"{mname}_top1"] = q_entry["top1s"].get(mname, "N/A")
+
+            all_example_records.append(record)
+
+    examples_index_path = report_dir / "query_examples_index.csv"
+    if all_example_records:
+        pd.DataFrame(all_example_records).to_csv(examples_index_path, index=False)
+        print(f"\n  Examples index saved to {examples_index_path}")
+
+    for model in loaded_models.values():
+        del model
+    torch.cuda.empty_cache()
+    gc.collect()
+
+    print(f"\n{'='*80}")
+    print(f"COMPARISON REPORT FINISHED")
+    print(f"  Report dir: {report_dir}")
+    print(f"  Summary: {report_dir / 'comparison_summary.csv'}")
+    print(f"  Examples: {examples_dir}")
+    print(f"{'='*80}")
+
+
+# ====================================================================
+#  MAIN
+# ====================================================================
+
+
 def main():
     config = PipelineConfig()
     config.DATAFRAMES_ROOT.mkdir(parents=True, exist_ok=True)
 
     DATA_CONFIG = [
+        # --- Train ---
         {
             "set_type": "train",
             "region_name": "Taizhou-1",
@@ -180,7 +823,7 @@ def main():
             "map_filename": "satellite03.tif",
             "crop_range_meters": 295,
             "overlap_stride_meters": 195,
-            "output_suffix": "one_to_one"
+            "output_suffix": "one_to_one",
         },
         {
             "set_type": "train",
@@ -189,7 +832,7 @@ def main():
             "map_filename": "satellite05.tif",
             "crop_range_meters": 365,
             "overlap_stride_meters": 265,
-            "output_suffix": "one_to_one"
+            "output_suffix": "one_to_one",
         },
         {
             "set_type": "train",
@@ -198,17 +841,43 @@ def main():
             "map_filename": "satellite01.tif",
             "crop_range_meters": 310,
             "overlap_stride_meters": 200,
-            "output_suffix": "one_to_one"
+            "output_suffix": "one_to_one",
         },
         {
-            "set_type": "val",
-            "region_name": "Changjiang-23",
-            "uav_visloc_id": "02",
-            "map_filename": "satellite02.tif",
-            "crop_range_meters": 310,
-            "overlap_stride_meters": 200,
-            "val_variant": "v1",
-            "output_suffix": "v1_one_to_one"
+            "set_type": "train",
+            "region_name": "Taizhou-6",
+            "uav_visloc_id": "04",
+            "map_filename": "satellite04.tif",
+            "crop_range_meters": 315,
+            "overlap_stride_meters": 215,
+            "output_suffix": "one_to_one",
+        },
+        {
+            "set_type": "train",
+            "region_name": "Zhuxi",
+            "uav_visloc_id": "06",
+            "map_filename": "satellite06.tif",
+            "crop_range_meters": 325,
+            "overlap_stride_meters": 225,
+            "output_suffix": "one_to_one",
+        },
+        {
+            "set_type": "train",
+            "region_name": "Huzhou-3",
+            "uav_visloc_id": "08",
+            "map_filename": "satellite08.tif",
+            "crop_range_meters": 320,
+            "overlap_stride_meters": 220,
+            "output_suffix": "one_to_one",
+        },
+        {
+            "set_type": "train",
+            "region_name": "Huailai",
+            "uav_visloc_id": "10",
+            "map_filename": "satellite10.tif",
+            "crop_range_meters": 315,
+            "overlap_stride_meters": 215,
+            "output_suffix": "one_to_one",
         },
         {
             "set_type": "val",
@@ -218,53 +887,7 @@ def main():
             "crop_range_meters": 310,
             "overlap_stride_meters": 210,
             "val_variant": "v2",
-            "output_suffix": "v2_one_to_one"
-        },
-        {
-            "set_type": "train",
-            "region_name": "Taizhou-6",
-            "uav_visloc_id": "04",
-            "map_filename": "satellite04.tif",
-            "crop_range_meters": 315,
-            "overlap_stride_meters": 215,
-            "output_suffix": "one_to_one"
-        },
-        {
-            "set_type": "train",
-            "region_name": "Zhuxi",
-            "uav_visloc_id": "06",
-            "map_filename": "satellite06.tif",
-            "crop_range_meters": 325,
-            "overlap_stride_meters": 225,
-            "output_suffix": "one_to_one"
-        },
-        {
-            "set_type": "train",
-            "region_name": "Huzhou-3",
-            "uav_visloc_id": "08",
-            "map_filename": "satellite08.tif",
-            "crop_range_meters": 320,
-            "overlap_stride_meters": 220,
-            "output_suffix": "one_to_one"
-        },
-        {
-            "set_type": "train",
-            "region_name": "Huailai",
-            "uav_visloc_id": "10",
-            "map_filename": "satellite10.tif",
-            "crop_range_meters": 315,
-            "overlap_stride_meters": 215,
-            "output_suffix": "one_to_one"
-        },
-        {
-            "set_type": "val",
-            "region_name": "Shandan",
-            "uav_visloc_id": "11",
-            "map_filename": "satellite11.tif",
-            "crop_range_meters": 370,
-            "overlap_stride_meters": 270,
-            "val_variant": "v1",
-            "output_suffix": "v1_one_to_one"
+            "output_suffix": "v2_one_to_one",
         },
         {
             "set_type": "val",
@@ -274,248 +897,136 @@ def main():
             "crop_range_meters": 370,
             "overlap_stride_meters": 270,
             "val_variant": "v2",
-            "output_suffix": "v2_one_to_one"
+            "output_suffix": "v2_one_to_one",
         },
     ]
 
-    all_csv_paths_one_to_one = {}
-    all_csv_paths_overlapping_patches = {}
-
+    # --- Tile Generation ---
+    all_csv_paths = {}
     for d_conf in DATA_CONFIG:
         region_name = d_conf["region_name"]
+        output_csv_path = config.DATAFRAMES_ONE_TO_ONE_DIR / f"{region_name}.csv"
+        all_csv_paths[region_name] = str(output_csv_path)
+        thumb_dir = config.THUMBNAILS_ONE_TO_ONE_OUTPUT_DIR / region_name
 
-        if config.one_to_one_tiles:
-            output_csv_path = config.DATAFRAMES_ONE_TO_ONE_DIR / f"{region_name}.csv"
-            all_csv_paths_one_to_one[region_name] = str(output_csv_path)
-            thumb_dir = config.THUMBNAILS_ONE_TO_ONE_OUTPUT_DIR / region_name
-
-            skip_generation = clearup_generated_data(
-                config, output_csv_path, thumb_dir, region_name
+        skip_generation = clearup_generated_data(
+            config, output_csv_path, thumb_dir, region_name
+        )
+        if not skip_generation:
+            map_tif_path = (
+                config.UAV_VISLOC_ROOT
+                / d_conf["uav_visloc_id"]
+                / d_conf["map_filename"]
             )
-            if not skip_generation:
-                # --- Satellite Tile Generation ---
-                map_tif_path = (
+            map_sat = MapSatellite(
+                csv_path=str(
+                    config.UAV_VISLOC_ROOT / "satellite_ coordinates_range.csv"
+                ),
+                tiles_satellite_csv_output_path=str(output_csv_path),
+                map_tif_path=str(map_tif_path),
+                region_name=region_name,
+                friendly_name=f"visloc-{region_name}-{d_conf['uav_visloc_id']}-satellite",
+            )
+            thumb_gen = OverlapingTilesGenerator(
+                output_dir=str(config.THUMBNAILS_ONE_TO_ONE_OUTPUT_DIR),
+                satellite_map_names=[map_sat],
+                crop_range_meters=d_conf["crop_range_meters"],
+                overlap_stride_meters=d_conf["overlap_stride_meters"],
+                is_rebuild_csv=config.force_regenerate_tiles,
+            )
+            thumb_gen.generate_tiles()
+
+            uav_gen = UavSmallerCropGenerator(
+                csv_path=str(
                     config.UAV_VISLOC_ROOT
                     / d_conf["uav_visloc_id"]
-                    / d_conf["map_filename"]
-                )
+                    / f"{d_conf['uav_visloc_id']}.csv"
+                ),
+                cropped_uav_csv_output_path=str(output_csv_path),
+                cropped_output_dir=str(config.THUMBNAILS_ONE_TO_ONE_OUTPUT_DIR),
+                uav_images_dir=str(
+                    config.UAV_VISLOC_ROOT / d_conf["uav_visloc_id"] / "drone"
+                ),
+                region_name=region_name,
+                friendly_name=f"visloc-{region_name}-{d_conf['uav_visloc_id']}-uav",
+            )
+            uav_gen.generate_tiles()
 
-                map_sat = MapSatellite(
-                    csv_path=str(
-                        config.UAV_VISLOC_ROOT / "satellite_ coordinates_range.csv"
-                    ),
-                    tiles_satellite_csv_output_path=str(output_csv_path),
-                    map_tif_path=str(map_tif_path),
-                    region_name=region_name,
-                    friendly_name=f"visloc-{region_name}-{d_conf['uav_visloc_id']}-satellite",
-                )
+    # --- Place ID Generation (NOWATER only —sanity check) ---
+    train_csvs, val_csvs = generate_place_ids_for_variant(
+        config=config,
+        data_config=DATA_CONFIG,
+        use_informativeness_filter=True,
+        uav_overlap_multiplier=1.0,
+    )
 
-                thumb_gen = OverlapingTilesGenerator(
-                    output_dir=str(config.THUMBNAILS_ONE_TO_ONE_OUTPUT_DIR),
-                    satellite_map_names=[map_sat],
-                    crop_range_meters=d_conf["crop_range_meters"],
-                    overlap_stride_meters=d_conf["overlap_stride_meters"],
-                    is_rebuild_csv=config.force_regenerate_tiles,
-                )
-                thumb_gen.generate_tiles()
+    print(f"\nTrain CSVs: {len(train_csvs)}")
+    print(f"Val CSVs: {len(val_csvs)}")
 
-                # --- UAV Crop Generation ---
-                uav_gen = UavSmallerCropGenerator(
-                    csv_path=str(
-                        config.UAV_VISLOC_ROOT
-                        / d_conf["uav_visloc_id"]
-                        / f"{d_conf['uav_visloc_id']}.csv"
-                    ),
-                    cropped_uav_csv_output_path=str(output_csv_path),
-                    cropped_output_dir=str(config.THUMBNAILS_ONE_TO_ONE_OUTPUT_DIR),
-                    uav_images_dir=str(
-                        config.UAV_VISLOC_ROOT / d_conf["uav_visloc_id"] / "drone"
-                    ),
-                    region_name=region_name,
-                    friendly_name=f"visloc-{region_name}-{d_conf['uav_visloc_id']}-uav",
-                )
+    # --- Experiments (sanity check: 1 seed, NOWATER only, 10 epochs) ---
+    base_exp = {
+        "seed": 42,
+        "max_epochs": 10,
+        "batch_size": 32,
+        "loss_name": "TripletMarginLoss",
+        "miner_name": "TripletMarginMiner",
+        "loss_margin": 0.05,
+        "miner_margin": 0.05,
+        "type_of_triplets": "all",
+        "optimizer": "adamw",
+        "swap": False,
+        "smooth_loss": False,
+        "lr": 1e-4,
+        "lr_sched": "cosine",
+        "lr_sched_args": {"T_max": 8},
+    }
 
-                uav_gen.generate_tiles()
-
-    # --- Place ID Generation ---
-    print("\n--- Starting Place ID Generation ---")
-    for d_conf in DATA_CONFIG:
-        region_name = d_conf["region_name"]
-        csv_path = all_csv_paths_one_to_one[region_name]
-        is_val = d_conf["set_type"] == "val"
-
-        csv_output_path = get_processed_path(csv_path, d_conf["output_suffix"])
-        generator = ManyToManyPlaceIdGenerator(
-            csv_tiles_path=csv_path,
-            csv_place_ids_output_path=csv_output_path,
-            force_regenerate=config.force_regenerate_place_ids,
-            is_validation_set=is_val,
-            is_validation_set_v2=d_conf.get("val_variant") == "v2",
-            radius_neighbors_meters=70 if is_val else d_conf["crop_range_meters"],
-            tiles_trash_directory=config.DATAFRAMES_TILES_TRASH,
-        )
-
-        generator.generate_place_ids()
-
-    # --- Prepare Data for Model Training ---
-    train_csvs: List[str] = []
-    val_csvs: List[str] = []
-
-    for d in DATA_CONFIG:
-        base_path = str(config.DATAFRAMES_ONE_TO_ONE_DIR / f"{d['region_name']}.csv")
-        final_path = get_processed_path(base_path, d["output_suffix"])
-
-        if d["set_type"] == "train":
-            train_csvs.append(final_path)
-        elif d["set_type"] == "val":
-            val_csvs.append(final_path)
-
-    print(f"Train CSVs count: {len(train_csvs)}")
-    print(f"Val CSVs count: {len(val_csvs)}")
-
-    EXPERIMENTS = [
+    experiments = [
         {
-            "name": "EXP-054_GeM_tripletall_bs32_cyclic_triangular2",
-            "seed": 42,
-            "max_epochs": 40,
-            "loss_name": "TripletMarginLoss",
-            "miner_name": "TripletMarginMiner",
-            "loss_margin": 0.05,
-            "miner_margin": 0.05,
-            "type_of_triplets": "all",
-            "swap": False,
-            "smooth_loss": False,
+            **base_exp,
+            "name": "NOWATER_GeM_s42",
             "agg_arch": "GeM",
             "agg_config": {"p": 3, "eps": 1e-6},
-            "lr_sched": "warmup_cosine",
-            "lr_sched_args": {
-                "warmup_fraction": 0.05,   # 5% total steps = ~2-3 epochs
-                "eta_min_ratio": 0.01,     # eta_min = 0.01 * 1e-4 = 1e-6
-            },
         },
-        # {
-        #     "name": "EXP-055_GeM_tripletall_bs32_cyclic_expRange",
-        #     "seed": 42,
-        #     "max_epochs": 40,
-        #     "loss_name": "TripletMarginLoss",
-        #     "miner_name": "TripletMarginMiner",
-        #     "loss_margin": 0.05,
-        #     "miner_margin": 0.05,
-        #     "type_of_triplets": "all",
-        #     "swap": False,
-        #     "smooth_loss": False,
-        #     "agg_arch": "GeM",
-        #     "agg_config": {"p": 3, "eps": 1e-6},
-        #     "lr_sched": "cyclic",
-        #     "lr_sched_args": {
-        #         "base_lr": 2e-5,
-        #         "max_lr": 1e-4,
-        #         "mode": "exp_range",
-        #         "gamma": 0.9995,
-        #         "step_size_up_epochs": 2,
-        #         "step_size_down_epochs": 2
-        #     }
-        # },
+        {
+            **base_exp,
+            "name": "NOWATER_ConvAP_s42",
+            "agg_arch": "ConvAP",
+            "agg_config": {"in_channels": 2048, "out_channels": 512, "s1": 2, "s2": 2},
+        },
     ]
 
-    logs_root = Path("./logs").resolve()
+    # --- Training ---
+    logs_root = Path("./logs_compare").resolve()
     logs_root.mkdir(parents=True, exist_ok=True)
 
-    all_summary_rows = []
+    all_results = []
 
-    for exp in EXPERIMENTS:
-        print("\n" + "=" * 100)
-        print(f"STARTING EXPERIMENT: {exp['name']}")
-        print("=" * 100)
+    for exp in experiments:
+        result = run_single_experiment(exp, train_csvs, val_csvs, logs_root)
 
-        pl.seed_everything(exp["seed"], workers=True)
+        run_dir = logs_root / exp["name"]
+        with open(run_dir / "summary.json", "w", encoding="utf-8") as f:
+            json.dump(result, f, indent=2, default=str)
 
-        run_dir = (logs_root / exp["name"]).resolve()
-        run_dir.mkdir(parents=True, exist_ok=True)
+        all_results.append(result)
 
-        with open(run_dir / "experiment_config.json", "w") as f:
-            json.dump(exp, f, indent=2)
+        pd.DataFrame(all_results).to_csv(logs_root / "all_results.csv", index=False)
 
-        datamodule = MapsDataModule(
-            tiles_csv_file_paths=train_csvs,
-            batch_size=exp.get("batch_size", 32),
-            val_set_names=val_csvs,
-            shuffle_all=True
-        )
+    # --- Comparison Report ---
+    print("\n" + "=" * 100)
+    print("GENERATING COMPARISON REPORT")
+    print("=" * 100)
 
-        valid_model_args = inspect.signature(VPRModel.__init__).parameters.keys()
-        model_kwargs = {k: v for k, v in exp.items() if k in valid_model_args}
-        
-        model = VPRModel(**model_kwargs)
+    generate_comparison_report(
+        experiments=experiments,
+        logs_root=logs_root,
+        val_csvs=val_csvs,
+        num_divergent=10,
+        num_consensus=5,
+    )
 
-        callbacks, cb_map = build_callbacks(run_dir)
-
-        old_cwd = os.getcwd()
-        os.chdir(run_dir)
-        trainer = None
-
-        try:
-            trainer = pl.Trainer(
-                accelerator="gpu",
-                devices=1,
-                default_root_dir=".",
-                num_nodes=1,
-                num_sanity_val_steps=0,
-                precision="32",
-                max_epochs=exp["max_epochs"],
-                check_val_every_n_epoch=1,
-                callbacks=callbacks,
-                reload_dataloaders_every_n_epochs=1,
-                log_every_n_steps=10,
-                gradient_clip_algorithm="norm",
-                gradient_clip_val=1.0,
-            )
-
-            trainer.fit(model=model, datamodule=datamodule)
-
-            full_model_path = run_dir / "full_model_final.pth"
-            torch.save(model.state_dict(), full_model_path)
-            print(f"Saved final model state_dict to: {full_model_path}")
-
-        finally:
-            os.chdir(old_cwd)
-
-        summary_row = copy.deepcopy(exp)
-        
-        current_agg_arch = exp.get("agg_arch", "gem")
-        current_agg_config = exp.get("agg_config", {})
-        if current_agg_arch == "ConvAP":
-            summary_row["convap_out_channels"] = current_agg_config.get("out_channels")
-            summary_row["convap_s1"] = current_agg_config.get("s1")
-            summary_row["convap_s2"] = current_agg_config.get("s2")
-
-        summary_row.update({
-            "best_mean_score": score_to_float(cb_map["mean"].best_model_score),
-            "best_mean_path": cb_map["mean"].best_model_path,
-            "best_min_score": score_to_float(cb_map["min"].best_model_score),
-            "best_min_path": cb_map["min"].best_model_path,
-            "best_shandan_v1_score": score_to_float(cb_map["shandan_v1"].best_model_score),
-            "best_shandan_v1_path": cb_map["shandan_v1"].best_model_path,
-            "best_changjiang_v1_score": score_to_float(cb_map["changjiang_v1"].best_model_score),
-            "best_changjiang_v1_path": cb_map["changjiang_v1"].best_model_path,
-            "final_model_path": str(run_dir / "full_model_final.pth"),
-        })
-
-        all_summary_rows.append(summary_row)
-        
-        pd.DataFrame(all_summary_rows).to_csv(logs_root / "screening_summary.csv", index=False)
-
-        print("FINISHED EXPERIMENT:")
-        print(summary_row)
-
-        del trainer
-        del model
-        del datamodule
-        torch.cuda.empty_cache()
-        gc.collect()
-
-    print("\nAll experiments finished.")
-    print(f"Summary saved to: {logs_root / 'screening_summary.csv'}")
+    print("\nAll done.")
 
 
 if __name__ == "__main__":
