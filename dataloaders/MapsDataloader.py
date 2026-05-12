@@ -22,7 +22,7 @@ class MapsDataModule(pl.LightningDataModule):
         # is_overlaping_patches_approach=False,
         tiles_csv_file_paths: List[str] = [],
         batch_size=32,
-        num_workers=1,
+        num_workers=90,
         val_set_names=[],
         shuffle_all=False,
         mean_std=IMAGENET_MEAN_STD,
@@ -80,7 +80,7 @@ class MapsDataModule(pl.LightningDataModule):
 
         self.valid_loader_config = {
             "batch_size": self.batch_size,
-            "num_workers": 0,
+            "num_workers": 5,
             "drop_last": False,
             "pin_memory": True,
             "shuffle": False,

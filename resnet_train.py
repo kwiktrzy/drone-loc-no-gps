@@ -161,6 +161,79 @@ def score_to_float(x):
         return float(x.detach().cpu().item())
     return float(x)
 
+def create_detailed_attention_figure(
+    query_path: str,
+    model_data: Dict[str, Dict[str, str]],  # model_name -> {"attn_query": path, "top1": path, "attn_top1": path}
+    model_hits: Dict[str, bool],
+    model_names_ordered: List[str],
+    output_path: Path,
+    title: str = "",
+):
+
+    n_models = len(model_names_ordered)
+    n_rows = n_models
+    n_cols = 4  # query orig, query attn, top1 orig, top1 attn
+
+    fig, axes = plt.subplots(
+        n_rows, n_cols,
+        figsize=(4 * n_cols, 4 * n_rows),
+        squeeze=False,
+    )
+
+    query_img = None
+    if os.path.exists(query_path):
+        query_img = Image.open(query_path).convert("RGB")
+
+    for row_idx, mname in enumerate(model_names_ordered):
+        data = model_data.get(mname, {})
+        hit = model_hits.get(mname, False)
+        status = "HIT" if hit else "MISS"
+
+        ax_q = axes[row_idx, 0]
+        if row_idx == 0 and query_img is not None:
+            ax_q.imshow(query_img)
+            ax_q.set_title("Query (UAV)", fontsize=9, fontweight="bold")
+        else:
+            ax_q.axis("off")
+        ax_q.axis("off")
+
+        ax_q_att = axes[row_idx, 1]
+        attn_q_path = data.get("attn_query")
+        if attn_q_path and os.path.exists(attn_q_path):
+            img = Image.open(attn_q_path).convert("RGB")
+            ax_q_att.imshow(img)
+            ax_q_att.set_title(f"{mname} Query Attn", fontsize=9)
+        else:
+            ax_q_att.text(0.5, 0.5, "N/A", ha="center", va="center")
+        ax_q_att.axis("off")
+
+        ax_t1 = axes[row_idx, 2]
+        top1_path = data.get("top1")
+        if top1_path and os.path.exists(top1_path):
+            img_t1 = Image.open(top1_path).convert("RGB")
+            ax_t1.imshow(img_t1)
+        else:
+            ax_t1.text(0.5, 0.5, "N/A", ha="center", va="center")
+        color = "green" if hit else "red"
+        ax_t1.set_title(f"Top-1 ({status})", fontsize=9, color=color, fontweight="bold")
+        ax_t1.axis("off")
+
+        ax_t1_att = axes[row_idx, 3]
+        attn_t1_path = data.get("attn_top1")
+        if attn_t1_path and os.path.exists(attn_t1_path):
+            img = Image.open(attn_t1_path).convert("RGB")
+            ax_t1_att.imshow(img)
+            ax_t1_att.set_title(f"{mname} Top-1 Attn", fontsize=9)
+        else:
+            ax_t1_att.text(0.5, 0.5, "N/A", ha="center", va="center")
+        ax_t1_att.axis("off")
+
+    if title:
+        fig.suptitle(title, fontsize=12, fontweight="bold")
+
+    plt.tight_layout(rect=[0, 0.03, 1, 0.97])
+    plt.savefig(output_path, dpi=150, bbox_inches="tight", facecolor="white")
+    plt.close()
 
 # ====================================================================
 #  PLACE ID GENERATION
@@ -435,10 +508,6 @@ def create_multimodel_comparison_figure(
     output_path: Path,
     title: str = "",
 ):
-    """
-    Jedna duża figura: Query + overlay per model w jednym rzędzie.
-    Format: [Query] [Model1_overlay] [Model2_overlay] ... [ModelN_overlay]
-    """
     try:
         n_models = len(model_names_ordered)
         n_cols = 1 + n_models  # query + modeli
@@ -494,10 +563,6 @@ def create_multimodel_heatmap_figure(
     output_path: Path,
     title: str = "",
 ):
-    """
-    Jedna duża figura: Query + heatmap overlay per model w jednym rzędzie.
-    Wygenerowana przez extract_attention_single_image z VPRModel.
-    """
     try:
         n_models = len(model_names_ordered)
         n_cols = 1 + n_models
@@ -548,10 +613,6 @@ def run_final_validations(
     val_csvs: List[str],
     ds_map: Dict[str, object],
 ) -> Dict[str, VPRModel]:
-    """
-    Dla każdego eksperymentu: ładuje best checkpoint, odpala final validation
-    z save_val_predictions=True. Zwraca załadowane modele (potrzebne do heatmap).
-    """
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     loaded_models = {}
 
@@ -572,7 +633,6 @@ def run_final_validations(
             print(f"[SKIP] No checkpoint for {exp_name}")
             continue
 
-        # Sprawdź czy predictions już istnieją (nie waliduj ponownie)
         all_preds_exist = True
         for ds_name in ds_map:
             pred_file = run_dir / f"predictions_{ds_name}.json"
@@ -682,6 +742,9 @@ def generate_comparison_report(
         summary_path = report_dir / "comparison_summary.csv"
         summary_df.to_csv(summary_path, index=False)
         print(f"  Summary saved to {summary_path}")
+        plot_metrics_summary(summary_path, report_dir)
+    else:
+        summary_path = None
 
     print("\n[REPORT] Finding divergent queries and generating heatmaps...")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -694,7 +757,6 @@ def generate_comparison_report(
     for ds_short_name in ds_map:
         print(f"\n  Dataset: {ds_short_name}")
 
-        # Zbierz predykcje wszystkich modeli dla tego datasetu
         preds_for_ds = {}
         for exp_name in model_names_ordered:
             key = (exp_name, ds_short_name)
@@ -731,7 +793,101 @@ def generate_comparison_report(
             )
             ex_dir.mkdir(exist_ok=True)
 
-            # --- Top-1 comprizon (figure with orginal + top1 per model) ---
+            query_utm = None
+            ref_model = model_names_ordered[0]
+            ref_key = (ref_model, ds_short_name)
+            if ref_key in all_preds:
+                ref_queries = all_preds[ref_key].get("queries", [])
+
+                for q in ref_queries:
+                    if q["query_path"] == q_path:
+                        qi = q.get("query_idx")
+                        if qi is not None and hasattr(ds_map[ds_short_name], "q_utm_np"):
+                            q_utm_arr = ds_map[ds_short_name].q_utm_np
+                            if qi < len(q_utm_arr):
+                                query_utm = q_utm_arr[qi]
+                        break
+
+            model_data = {}
+            for mname in model_names_ordered:
+                if mname not in loaded_models:
+                    continue
+                # Query attn
+                attn_q_dir = ex_dir / f"attn_{mname}"
+                attn_q_file = None
+                if not attn_q_dir.exists():
+                    try:
+                        loaded_models[mname].extract_attention_single_image(
+                            val_dataset=ds_map[ds_short_name],
+                            image_path=q_path,
+                            device=device,
+                            output_dir=str(attn_q_dir),
+                        )
+                    except Exception as e:
+                        print(f"      [WARN] Query attention failed for {mname}: {e}")
+                generated = list(attn_q_dir.glob("*_attention.png"))
+                if generated:
+                    attn_q_file = str(generated[0])
+
+                # Top-1 attn
+                top1_path = q_entry["top1s"].get(mname)
+                attn_t1_file = None
+                if top1_path and os.path.exists(top1_path):
+                    attn_t1_dir = ex_dir / f"attn_{mname}_top1"
+                    if not attn_t1_dir.exists():
+                        try:
+                            loaded_models[mname].extract_attention_single_image(
+                                val_dataset=ds_map[ds_short_name],
+                                image_path=top1_path,
+                                device=device,
+                                output_dir=str(attn_t1_dir),
+                            )
+                        except Exception as e:
+                            print(f"      [WARN] Top-1 attention failed for {mname}: {e}")
+                    gen_t1 = list(attn_t1_dir.glob("*_attention.png"))
+                    if gen_t1:
+                        attn_t1_file = str(gen_t1[0])
+
+                model_data[mname] = {
+                    "attn_query": attn_q_file,
+                    "top1": top1_path,
+                    "attn_top1": attn_t1_file,
+                }
+
+            top1_distances = {}
+            top1_utm_coords = {}
+            if query_utm is not None and hasattr(ds_map[ds_short_name], "db_utm_np"):
+                db_utm_arr = ds_map[ds_short_name].db_utm_np
+                for mname in model_names_ordered:
+                    key_m = (mname, ds_short_name)
+                    if key_m in all_preds:
+                        qs = all_preds[key_m].get("queries", [])
+                        for q in qs:
+                            if q["query_path"] == q_path:
+                                top1_idx = None
+                                if "top5_indices" in q and len(q["top5_indices"]) > 0:
+                                    top1_idx = q["top5_indices"][0]
+                                elif "top5_paths" in q and len(q["top5_paths"]) > 0:
+                                    pass
+                                if top1_idx is not None and top1_idx < len(db_utm_arr):
+                                    top1_utm = db_utm_arr[top1_idx]
+                                    dist = np.linalg.norm(query_utm - top1_utm)
+                                    top1_distances[mname] = float(dist)
+                                    top1_utm_coords[mname] = top1_utm.tolist()
+                                else:
+                                    top1_distances[mname] = None
+                                    top1_utm_coords[mname] = None
+                                break
+
+            create_detailed_attention_figure(
+                query_path=q_path,
+                model_data=model_data,
+                model_hits=q_entry["hits"],
+                model_names_ordered=model_names_ordered,
+                output_path=ex_dir / "detailed_comparison.png",
+                title=f"{ds_short_name} | {q_type} #{idx+1}",
+            )
+
             create_multimodel_comparison_figure(
                 query_path=q_path,
                 model_top1s=q_entry["top1s"],
@@ -741,29 +897,14 @@ def generate_comparison_report(
                 title=f"{ds_short_name} | {q_type} #{idx+1}",
             )
 
-            # --- Heatmapy attention per model ---
-            attn_paths = {}
+            simple_attn_paths = {}
             for mname in model_names_ordered:
-                if mname not in loaded_models:
-                    continue
-                attn_dir = ex_dir / f"attn_{mname}"
-                try:
-                    loaded_models[mname].extract_attention_single_image(
-                        val_dataset=ds_map[ds_short_name],
-                        image_path=q_path,
-                        device=device,
-                        output_dir=str(attn_dir),
-                    )
-                    generated = list(attn_dir.glob("*_attention.png"))
-                    if generated:
-                        attn_paths[mname] = str(generated[0])
-                except Exception as e:
-                    print(f"      [WARN] Attention extraction failed for {mname}: {e}")
-
-            if attn_paths:
+                if model_data[mname]["attn_query"]:
+                    simple_attn_paths[mname] = model_data[mname]["attn_query"]
+            if simple_attn_paths:
                 create_multimodel_heatmap_figure(
                     query_path=q_path,
-                    model_attn_paths=attn_paths,
+                    model_attn_paths=simple_attn_paths,
                     model_names_ordered=model_names_ordered,
                     output_path=ex_dir / "comparison_heatmaps.png",
                     title=f"{ds_short_name} | Attention | {q_type} #{idx+1}",
@@ -774,6 +915,7 @@ def generate_comparison_report(
             except Exception:
                 pass
 
+            # --- Buduj rekord z dodatkowymi informacjami ---
             record = {
                 "dataset": ds_short_name,
                 "type": q_type,
@@ -781,9 +923,20 @@ def generate_comparison_report(
                 "query_path": q_path,
                 "example_dir": str(ex_dir.relative_to(report_dir)),
             }
+            if query_utm is not None:
+                record["query_utm_e"] = query_utm[0]
+                record["query_utm_n"] = query_utm[1]
+
             for mname in model_names_ordered:
                 record[f"{mname}_hit"] = q_entry["hits"].get(mname, False)
-                record[f"{mname}_top1"] = q_entry["top1s"].get(mname, "N/A")
+                record[f"{mname}_top1_path"] = q_entry["top1s"].get(mname, "N/A")
+                if mname in top1_distances:
+                    record[f"{mname}_top1_dist_m"] = top1_distances[mname]
+                    if top1_utm_coords.get(mname):
+                        record[f"{mname}_top1_utm_e"] = top1_utm_coords[mname][0]
+                        record[f"{mname}_top1_utm_n"] = top1_utm_coords[mname][1]
+                else:
+                    record[f"{mname}_top1_dist_m"] = None
 
             all_example_records.append(record)
 
@@ -800,10 +953,25 @@ def generate_comparison_report(
     print(f"\n{'='*80}")
     print(f"COMPARISON REPORT FINISHED")
     print(f"  Report dir: {report_dir}")
-    print(f"  Summary: {report_dir / 'comparison_summary.csv'}")
+    print(f"  Summary: {summary_path if summary_path else 'N/A'}")
     print(f"  Examples: {examples_dir}")
     print(f"{'='*80}")
 
+def plot_metrics_summary(summary_csv_path: Path, output_dir: Path):
+    df = pd.read_csv(summary_csv_path)
+    metric_cols = [c for c in df.columns if "_R1" in c or "_R5" in c or "_R10" in c]
+    if not metric_cols:
+        return
+
+    for metric in metric_cols:
+        plt.figure(figsize=(8, 4))
+        bars = plt.bar(df["experiment"], df[metric], color="skyblue", edgecolor="black")
+        plt.xticks(rotation=45, ha="right")
+        plt.ylabel(metric)
+        plt.title(f"Porównanie {metric}")
+        plt.tight_layout()
+        plt.savefig(output_dir / f"bar_{metric}.png", dpi=150)
+        plt.close()
 
 # ====================================================================
 #  MAIN
@@ -963,55 +1131,212 @@ def main():
     print(f"\nTrain CSVs: {len(train_csvs)}")
     print(f"Val CSVs: {len(val_csvs)}")
 
-    # --- Experiments (sanity check: 1 seed, NOWATER only, 10 epochs) ---
-    base_exp = {
-        "seed": 42,
-        "max_epochs": 10,
-        "batch_size": 32,
+    experiments = [
+    # 1. ResNet50 + SALAD_Resnet, MultiSimilarityLoss
+    {
+        "seed": 42, "max_epochs": 40, "batch_size": 32,
+        "loss_name": "MultiSimilarityLoss",
+        "miner_name": "MultiSimilarityMiner",
+        "miner_margin": 0.1,
+        "distance": "CosineSimilarity",
+        "optimizer": "adamw",
+        "lr": 1e-4,
+        "lr_sched": "cosine",
+        "lr_sched_args": {"T_max": 35},
+        "name": "NOWATER_ResNet50_SALADres_MS_s42",
+        "backbone_arch": "resnet50",
+        "backbone_config": {},
+        "agg_arch": "SALAD_Resnet",
+        "agg_config": {
+            "num_channels": 2048,
+            "num_clusters": 64,
+            "cluster_dim": 128,
+            "token_dim": 256,
+        },
+    },
+    # 2. DINOv2 + SALAD, MultiSimilarityLoss
+    {
+        "seed": 42, "max_epochs": 40, "batch_size": 32,
+        "loss_name": "MultiSimilarityLoss",
+        "miner_name": "MultiSimilarityMiner",
+        "miner_margin": 0.1,
+        "distance": "CosineSimilarity",
+        "optimizer": "adamw",
+        "lr": 6e-5,
+        "weight_decay": 9.5e-9,
+        "lr_sched": "linear",
+        "lr_sched_args": {
+            "start_factor": 1,
+            "end_factor": 0.2,
+            "total_iters": 4000,
+        },
+        "name": "NOWATER_DINOv2_SALAD_MS_s42",
+        "backbone_arch": "dinov2_vitb14",
+        "backbone_config": {
+            "num_trainable_blocks": 4,
+            "return_token": True,
+            "norm_layer": True,
+        },
+        "agg_arch": "SALAD",
+        "agg_config": {
+            "num_channels": 768,
+            "num_clusters": 64,
+            "cluster_dim": 128,
+            "token_dim": 256,
+        },
+    },
+    # 3. ResNet50 + SALAD_Resnet, TripletMarginLoss (all)
+    {
+        "seed": 42, "max_epochs": 40, "batch_size": 32,
         "loss_name": "TripletMarginLoss",
         "miner_name": "TripletMarginMiner",
         "loss_margin": 0.05,
         "miner_margin": 0.05,
         "type_of_triplets": "all",
+        "distance": "CosineSimilarity",
         "optimizer": "adamw",
-        "swap": False,
-        "smooth_loss": False,
+        "swap": False, "smooth_loss": False,
         "lr": 1e-4,
         "lr_sched": "cosine",
-        "lr_sched_args": {"T_max": 8},
-    }
-
-    experiments = [
-        {
-            **base_exp,
-            "name": "NOWATER_GeM_s42",
-            "agg_arch": "GeM",
-            "agg_config": {"p": 3, "eps": 1e-6},
+        "lr_sched_args": {"T_max": 35},
+        "name": "NOWATER_ResNet50_SALADres_TripletAll_s42",
+        "backbone_arch": "resnet50",
+        "backbone_config": {},
+        "agg_arch": "SALAD_Resnet",
+        "agg_config": {
+            "num_channels": 2048,
+            "num_clusters": 64,
+            "cluster_dim": 128,
+            "token_dim": 256,
         },
-        {
-            **base_exp,
-            "name": "NOWATER_ConvAP_s42",
-            "agg_arch": "ConvAP",
-            "agg_config": {"in_channels": 2048, "out_channels": 512, "s1": 2, "s2": 2},
+    },
+    # 4. GeM, all, s42
+    {
+        "seed": 42, "max_epochs": 40, "batch_size": 32,
+        "loss_name": "TripletMarginLoss",
+        "miner_name": "TripletMarginMiner",
+        "loss_margin": 0.05,
+        "miner_margin": 0.05,
+        "type_of_triplets": "all",
+        "distance": "CosineSimilarity",
+        "optimizer": "adamw",
+        "swap": False, "smooth_loss": False,
+        "lr": 1e-4, "lr_sched": "cosine",
+        "lr_sched_args": {"T_max": 35},
+        "name": "NOWATER_GeM_all_s42",
+        "agg_arch": "GeM",
+        "agg_config": {"p": 3, "eps": 1e-6},
+    },
+    # 5. GeM, semihard, s42
+    {
+        "seed": 42, "max_epochs": 40, "batch_size": 32,
+        "loss_name": "TripletMarginLoss",
+        "miner_name": "TripletMarginMiner",
+        "loss_margin": 0.05,
+        "miner_margin": 0.05,
+        "type_of_triplets": "semihard",
+        "distance": "CosineSimilarity",
+        "optimizer": "adamw",
+        "swap": False, "smooth_loss": False,
+        "lr": 1e-4, "lr_sched": "cosine",
+        "lr_sched_args": {"T_max": 35},
+        "name": "NOWATER_GeM_semihard_s42",
+        "agg_arch": "GeM",
+        "agg_config": {"p": 3, "eps": 1e-6},
+    },
+    # 6. GeM, all, s123, bs64
+    {
+        "seed": 123, "max_epochs": 40, "batch_size": 64,
+        "loss_name": "TripletMarginLoss",
+        "miner_name": "TripletMarginMiner",
+        "loss_margin": 0.05,
+        "miner_margin": 0.05,
+        "type_of_triplets": "all",
+        "distance": "CosineSimilarity",
+        "optimizer": "adamw",
+        "swap": False, "smooth_loss": False,
+        "lr": 1e-4, "lr_sched": "cosine",
+        "lr_sched_args": {"T_max": 35},
+        "name": "NOWATER_GeM_all_s123_bs64",
+        "agg_arch": "GeM",
+        "agg_config": {"p": 3, "eps": 1e-6},
+    },
+    # 7. GeM, semihard, s123, bs64
+    {
+        "seed": 123, "max_epochs": 40, "batch_size": 64,
+        "loss_name": "TripletMarginLoss",
+        "miner_name": "TripletMarginMiner",
+        "loss_margin": 0.05,
+        "miner_margin": 0.05,
+        "type_of_triplets": "semihard",
+        "distance": "CosineSimilarity",
+        "optimizer": "adamw",
+        "swap": False, "smooth_loss": False,
+        "lr": 1e-4, "lr_sched": "cosine",
+        "lr_sched_args": {"T_max": 35},
+        "name": "NOWATER_GeM_semihard_s123_bs64",
+        "agg_arch": "GeM",
+        "agg_config": {"p": 3, "eps": 1e-6},
+    },
+    # 8. ConvAP, all, s123
+    {
+        "seed": 123, "max_epochs": 40, "batch_size": 32,
+        "loss_name": "TripletMarginLoss",
+        "miner_name": "TripletMarginMiner",
+        "loss_margin": 0.05,
+        "miner_margin": 0.05,
+        "type_of_triplets": "all",
+        "distance": "CosineSimilarity",
+        "optimizer": "adamw",
+        "swap": False, "smooth_loss": False,
+        "lr": 1e-4, "lr_sched": "cosine",
+        "lr_sched_args": {"T_max": 35},
+        "name": "NOWATER_ConvAP_all_s123",
+        "agg_arch": "ConvAP",
+        "agg_config": {
+            "in_channels": 2048,
+            "out_channels": 512,
+            "s1": 2,
+            "s2": 2,
         },
-    ]
+    },
+    # 9. GeM, ContrastiveLoss + MultiSimilarityMiner
+    {
+        "seed": 42, "max_epochs": 40, "batch_size": 32,
+        "loss_name": "ContrastiveLoss",
+        "miner_name": "MultiSimilarityMiner",
+        "loss_margin": 0.8,
+        "loss_margin_neg": 0.4,
+        "miner_margin": 0.1,
+        "distance": "CosineSimilarity",
+        "optimizer": "adamw",
+        "lr": 1e-4, "lr_sched": "cosine",
+        "lr_sched_args": {"T_max": 35},
+        "name": "NOWATER_GeM_ContrastiveMS_s42",
+        "agg_arch": "GeM",
+        "agg_config": {"p": 3, "eps": 1e-6},
+    },
+]
 
     # --- Training ---
     logs_root = Path("./logs_compare").resolve()
     logs_root.mkdir(parents=True, exist_ok=True)
 
     all_results = []
+    SKIP_TRAINING = False
+    if not SKIP_TRAINING:
+        for exp in experiments:
+            result = run_single_experiment(exp, train_csvs, val_csvs, logs_root)
 
-    for exp in experiments:
-        result = run_single_experiment(exp, train_csvs, val_csvs, logs_root)
+            run_dir = logs_root / exp["name"]
+            with open(run_dir / "summary.json", "w", encoding="utf-8") as f:
+                json.dump(result, f, indent=2, default=str)
 
-        run_dir = logs_root / exp["name"]
-        with open(run_dir / "summary.json", "w", encoding="utf-8") as f:
-            json.dump(result, f, indent=2, default=str)
+            all_results.append(result)
 
-        all_results.append(result)
-
-        pd.DataFrame(all_results).to_csv(logs_root / "all_results.csv", index=False)
+            pd.DataFrame(all_results).to_csv(logs_root / "all_results.csv", index=False)
+    else:
+        print("Skipping training, using existing results.")
 
     # --- Comparison Report ---
     print("\n" + "=" * 100)

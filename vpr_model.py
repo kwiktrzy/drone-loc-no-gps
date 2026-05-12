@@ -29,13 +29,10 @@ class VPRModel(pl.LightningModule):
 
     def __init__(
         self,
-        # ---- Backbone
         backbone_arch="resnet50",
         backbone_config={},
-        # ---- Aggregator
         agg_arch="ConvAP",
         agg_config={},
-        # ---- Train hyperparameters
         lr=0.03,
         optimizer="sgd",
         weight_decay=1e-3,
@@ -46,11 +43,18 @@ class VPRModel(pl.LightningModule):
             "end_factor": 0.2,
             "total_iters": 4000,
         },
-        # ----- Loss
         loss_name="MultiSimilarityLoss",
         miner_name="MultiSimilarityMiner",
         miner_margin=0.1,
         faiss_gpu=False,
+        # ---- loss/miner hyperparameters ----
+        loss_margin=None,
+        loss_margin_neg=None,
+        miner_margin_neg=None,
+        type_of_triplets=None,
+        swap=None,
+        smooth_loss=None,
+        distance=None,
     ):
         super().__init__()
 
@@ -70,12 +74,19 @@ class VPRModel(pl.LightningModule):
         self.lr_sched = lr_sched
         self.lr_sched_args = lr_sched_args
 
-        # Loss
         self.loss_name = loss_name
         self.miner_name = miner_name
         self.miner_margin = miner_margin
+        self.loss_margin = loss_margin
+        self.loss_margin_neg = loss_margin_neg
+        self.miner_margin_neg = miner_margin_neg
+        self.type_of_triplets = type_of_triplets
+        self.swap = swap
+        self.smooth_loss = smooth_loss
+        self.distance = distance
+        self.faiss_gpu = faiss_gpu
 
-        self.save_hyperparameters()  # write hyperparams into a file
+        self.save_hyperparameters()
 
         # Build kwargs from hyperparameters so config values actually reach loss/miner
         loss_kwargs = {

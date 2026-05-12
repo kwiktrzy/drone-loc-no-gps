@@ -114,15 +114,13 @@ class SALAD(nn.Module):
         Returns:
             f (torch.Tensor): The global descriptor [B, m*l + g]
         """
-        x, t = x  # Extract features and token
-
+        x, t = x # Extract features and token
         f = self.cluster_features(x).flatten(2)
         p = self.score(x).flatten(2)
         t = self.token_features(t)
-
         # Sinkhorn algorithm
         p = get_matching_probs(p, self.dust_bin, 3)
-        p = torch.exp(p)
+        p = torch.exp(p)       
         # Normalize to maintain mass
         p = p[:, :-1, :]
 
@@ -141,4 +139,4 @@ class SALAD(nn.Module):
             dim=-1,
         )
 
-        return nn.functional.normalize(f, p=2, dim=-1)
+        return nn.functional.normalize(f, p=2, dim=-1), attn_map 
