@@ -87,6 +87,17 @@ class VPRModel(pl.LightningModule):
         self.faiss_gpu = faiss_gpu
 
         self.save_hyperparameters()
+        if isinstance(self.distance, str):
+            import pytorch_metric_learning.distances as ptml_dist
+            dist_map = {
+                "CosineSimilarity": ptml_dist.CosineSimilarity(),
+                "DotProductSimilarity": ptml_dist.DotProductSimilarity(),
+                "LpDistance": ptml_dist.LpDistance(),
+            }
+            if self.distance in dist_map:
+                self.distance = dist_map[self.distance]
+            else:
+                raise ValueError(f"Unknown distance: {self.distance}")
 
         # Build kwargs from hyperparameters so config values actually reach loss/miner
         loss_kwargs = {

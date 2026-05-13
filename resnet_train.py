@@ -384,6 +384,12 @@ def run_single_experiment(
         return result
 
     except Exception as e:
+
+        if "CUDA" in str(e):
+            print(f"[CUDA ERROR] Attempting cleanup...")
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+        
         print(f"\n[ERROR] Experiment {exp['name']} failed: {e}")
         return {
             "experiment": exp["name"],
@@ -395,11 +401,15 @@ def run_single_experiment(
     finally:
         os.chdir(old_cwd)
         try:
-            del trainer, model, datamodule
+            del trainer
+            del model
+            del datamodule
         except NameError:
             pass
         torch.cuda.empty_cache()
+        torch.cuda.synchronize()
         gc.collect()
+        import time; time.sleep(1)
 
 
 # ====================================================================
@@ -1133,151 +1143,151 @@ def main():
 
     experiments = [
     # 1. ResNet50 + SALAD_Resnet, MultiSimilarityLoss
-    {
-        "seed": 42, "max_epochs": 40, "batch_size": 32,
-        "loss_name": "MultiSimilarityLoss",
-        "miner_name": "MultiSimilarityMiner",
-        "miner_margin": 0.1,
-        "distance": "CosineSimilarity",
-        "optimizer": "adamw",
-        "lr": 1e-4,
-        "lr_sched": "cosine",
-        "lr_sched_args": {"T_max": 35},
-        "name": "NOWATER_ResNet50_SALADres_MS_s42",
-        "backbone_arch": "resnet50",
-        "backbone_config": {},
-        "agg_arch": "SALAD_Resnet",
-        "agg_config": {
-            "num_channels": 2048,
-            "num_clusters": 64,
-            "cluster_dim": 128,
-            "token_dim": 256,
-        },
-    },
-    # 2. DINOv2 + SALAD, MultiSimilarityLoss
-    {
-        "seed": 42, "max_epochs": 40, "batch_size": 32,
-        "loss_name": "MultiSimilarityLoss",
-        "miner_name": "MultiSimilarityMiner",
-        "miner_margin": 0.1,
-        "distance": "CosineSimilarity",
-        "optimizer": "adamw",
-        "lr": 6e-5,
-        "weight_decay": 9.5e-9,
-        "lr_sched": "linear",
-        "lr_sched_args": {
-            "start_factor": 1,
-            "end_factor": 0.2,
-            "total_iters": 4000,
-        },
-        "name": "NOWATER_DINOv2_SALAD_MS_s42",
-        "backbone_arch": "dinov2_vitb14",
-        "backbone_config": {
-            "num_trainable_blocks": 4,
-            "return_token": True,
-            "norm_layer": True,
-        },
-        "agg_arch": "SALAD",
-        "agg_config": {
-            "num_channels": 768,
-            "num_clusters": 64,
-            "cluster_dim": 128,
-            "token_dim": 256,
-        },
-    },
-    # 3. ResNet50 + SALAD_Resnet, TripletMarginLoss (all)
-    {
-        "seed": 42, "max_epochs": 40, "batch_size": 32,
-        "loss_name": "TripletMarginLoss",
-        "miner_name": "TripletMarginMiner",
-        "loss_margin": 0.05,
-        "miner_margin": 0.05,
-        "type_of_triplets": "all",
-        "distance": "CosineSimilarity",
-        "optimizer": "adamw",
-        "swap": False, "smooth_loss": False,
-        "lr": 1e-4,
-        "lr_sched": "cosine",
-        "lr_sched_args": {"T_max": 35},
-        "name": "NOWATER_ResNet50_SALADres_TripletAll_s42",
-        "backbone_arch": "resnet50",
-        "backbone_config": {},
-        "agg_arch": "SALAD_Resnet",
-        "agg_config": {
-            "num_channels": 2048,
-            "num_clusters": 64,
-            "cluster_dim": 128,
-            "token_dim": 256,
-        },
-    },
+    # {
+    #     "seed": 42, "max_epochs": 40, "batch_size": 32,
+    #     "loss_name": "MultiSimilarityLoss",
+    #     "miner_name": "MultiSimilarityMiner",
+    #     "miner_margin": 0.1,
+    #     "distance": "CosineSimilarity",
+    #     "optimizer": "adamw",
+    #     "lr": 1e-4,
+    #     "lr_sched": "cosine",
+    #     "lr_sched_args": {"T_max": 35},
+    #     "name": "NOWATER_ResNet50_SALADres_MS_s42",
+    #     "backbone_arch": "resnet50",
+    #     "backbone_config": {},
+    #     "agg_arch": "SALAD_Resnet",
+    #     "agg_config": {
+    #         "num_channels": 2048,
+    #         "num_clusters": 32,
+    #         "cluster_dim": 128,
+    #         "token_dim": 256,
+    #     },
+    # },
+    # # 2. DINOv2 + SALAD, MultiSimilarityLoss
+    # {
+    #     "seed": 42, "max_epochs": 40, "batch_size": 32,
+    #     "loss_name": "MultiSimilarityLoss",
+    #     "miner_name": "MultiSimilarityMiner",
+    #     "miner_margin": 0.1,
+    #     "distance": "CosineSimilarity",
+    #     "optimizer": "adamw",
+    #     "lr": 6e-5,
+    #     "weight_decay": 9.5e-9,
+    #     "lr_sched": "linear",
+    #     "lr_sched_args": {
+    #         "start_factor": 1,
+    #         "end_factor": 0.2,
+    #         "total_iters": 4000,
+    #     },
+    #     "name": "NOWATER_DINOv2_SALAD_MS_s42",
+    #     "backbone_arch": "dinov2_vitb14",
+    #     "backbone_config": {
+    #         "num_trainable_blocks": 4,
+    #         "return_token": True,
+    #         "norm_layer": True,
+    #     },
+    #     "agg_arch": "SALAD",
+    #     "agg_config": {
+    #         "num_channels": 768,
+    #         "num_clusters": 64,
+    #         "cluster_dim": 128,
+    #         "token_dim": 256,
+    #     },
+    # },
+    # # 3. ResNet50 + SALAD_Resnet, TripletMarginLoss (all)
+    # {
+    #     "seed": 42, "max_epochs": 40, "batch_size": 32,
+    #     "loss_name": "TripletMarginLoss",
+    #     "miner_name": "TripletMarginMiner",
+    #     "loss_margin": 0.05,
+    #     "miner_margin": 0.05,
+    #     "type_of_triplets": "all",
+    #     "distance": "CosineSimilarity",
+    #     "optimizer": "adamw",
+    #     "swap": False, "smooth_loss": False,
+    #     "lr": 1e-4,
+    #     "lr_sched": "cosine",
+    #     "lr_sched_args": {"T_max": 35},
+    #     "name": "NOWATER_ResNet50_SALADres_TripletAll_s42",
+    #     "backbone_arch": "resnet50",
+    #     "backbone_config": {},
+    #     "agg_arch": "SALAD_Resnet",
+    #     "agg_config": {
+    #         "num_channels": 2048,
+    #         "num_clusters": 32,
+    #         "cluster_dim": 128,
+    #         "token_dim": 256,
+    #     },
+    # },
     # 4. GeM, all, s42
-    {
-        "seed": 42, "max_epochs": 40, "batch_size": 32,
-        "loss_name": "TripletMarginLoss",
-        "miner_name": "TripletMarginMiner",
-        "loss_margin": 0.05,
-        "miner_margin": 0.05,
-        "type_of_triplets": "all",
-        "distance": "CosineSimilarity",
-        "optimizer": "adamw",
-        "swap": False, "smooth_loss": False,
-        "lr": 1e-4, "lr_sched": "cosine",
-        "lr_sched_args": {"T_max": 35},
-        "name": "NOWATER_GeM_all_s42",
-        "agg_arch": "GeM",
-        "agg_config": {"p": 3, "eps": 1e-6},
-    },
-    # 5. GeM, semihard, s42
-    {
-        "seed": 42, "max_epochs": 40, "batch_size": 32,
-        "loss_name": "TripletMarginLoss",
-        "miner_name": "TripletMarginMiner",
-        "loss_margin": 0.05,
-        "miner_margin": 0.05,
-        "type_of_triplets": "semihard",
-        "distance": "CosineSimilarity",
-        "optimizer": "adamw",
-        "swap": False, "smooth_loss": False,
-        "lr": 1e-4, "lr_sched": "cosine",
-        "lr_sched_args": {"T_max": 35},
-        "name": "NOWATER_GeM_semihard_s42",
-        "agg_arch": "GeM",
-        "agg_config": {"p": 3, "eps": 1e-6},
-    },
-    # 6. GeM, all, s123, bs64
-    {
-        "seed": 123, "max_epochs": 40, "batch_size": 64,
-        "loss_name": "TripletMarginLoss",
-        "miner_name": "TripletMarginMiner",
-        "loss_margin": 0.05,
-        "miner_margin": 0.05,
-        "type_of_triplets": "all",
-        "distance": "CosineSimilarity",
-        "optimizer": "adamw",
-        "swap": False, "smooth_loss": False,
-        "lr": 1e-4, "lr_sched": "cosine",
-        "lr_sched_args": {"T_max": 35},
-        "name": "NOWATER_GeM_all_s123_bs64",
-        "agg_arch": "GeM",
-        "agg_config": {"p": 3, "eps": 1e-6},
-    },
-    # 7. GeM, semihard, s123, bs64
-    {
-        "seed": 123, "max_epochs": 40, "batch_size": 64,
-        "loss_name": "TripletMarginLoss",
-        "miner_name": "TripletMarginMiner",
-        "loss_margin": 0.05,
-        "miner_margin": 0.05,
-        "type_of_triplets": "semihard",
-        "distance": "CosineSimilarity",
-        "optimizer": "adamw",
-        "swap": False, "smooth_loss": False,
-        "lr": 1e-4, "lr_sched": "cosine",
-        "lr_sched_args": {"T_max": 35},
-        "name": "NOWATER_GeM_semihard_s123_bs64",
-        "agg_arch": "GeM",
-        "agg_config": {"p": 3, "eps": 1e-6},
-    },
+    # {
+    #     "seed": 42, "max_epochs": 40, "batch_size": 32,
+    #     "loss_name": "TripletMarginLoss",
+    #     "miner_name": "TripletMarginMiner",
+    #     "loss_margin": 0.05,
+    #     "miner_margin": 0.05,
+    #     "type_of_triplets": "all",
+    #     "distance": "CosineSimilarity",
+    #     "optimizer": "adamw",
+    #     "swap": False, "smooth_loss": False,
+    #     "lr": 1e-4, "lr_sched": "cosine",
+    #     "lr_sched_args": {"T_max": 35},
+    #     "name": "NOWATER_GeM_all_s42",
+    #     "agg_arch": "GeM",
+    #     "agg_config": {"p": 3, "eps": 1e-6},
+    # },
+    # # 5. GeM, semihard, s42
+    # {
+    #     "seed": 42, "max_epochs": 40, "batch_size": 32,
+    #     "loss_name": "TripletMarginLoss",
+    #     "miner_name": "TripletMarginMiner",
+    #     "loss_margin": 0.05,
+    #     "miner_margin": 0.05,
+    #     "type_of_triplets": "semihard",
+    #     "distance": "CosineSimilarity",
+    #     "optimizer": "adamw",
+    #     "swap": False, "smooth_loss": False,
+    #     "lr": 1e-4, "lr_sched": "cosine",
+    #     "lr_sched_args": {"T_max": 35},
+    #     "name": "NOWATER_GeM_semihard_s42",
+    #     "agg_arch": "GeM",
+    #     "agg_config": {"p": 3, "eps": 1e-6},
+    # },
+    # 6. GeM, all, s123, bs64 
+    # {
+    #     "seed": 123, "max_epochs": 40, "batch_size": 64,
+    #     "loss_name": "TripletMarginLoss",
+    #     "miner_name": "TripletMarginMiner",
+    #     "loss_margin": 0.05,
+    #     "miner_margin": 0.05,
+    #     "type_of_triplets": "all",
+    #     "distance": "CosineSimilarity",
+    #     "optimizer": "adamw",
+    #     "swap": False, "smooth_loss": False,
+    #     "lr": 1e-4, "lr_sched": "cosine",
+    #     "lr_sched_args": {"T_max": 35},
+    #     "name": "NOWATER_GeM_all_s123_bs64",
+    #     "agg_arch": "GeM",
+    #     "agg_config": {"p": 3, "eps": 1e-6},
+    # },
+    # # 7. GeM, semihard, s123, bs64
+    # {
+    #     "seed": 123, "max_epochs": 40, "batch_size": 64,
+    #     "loss_name": "TripletMarginLoss",
+    #     "miner_name": "TripletMarginMiner",
+    #     "loss_margin": 0.05,
+    #     "miner_margin": 0.05,
+    #     "type_of_triplets": "semihard",
+    #     "distance": "CosineSimilarity",
+    #     "optimizer": "adamw",
+    #     "swap": False, "smooth_loss": False,
+    #     "lr": 1e-4, "lr_sched": "cosine",
+    #     "lr_sched_args": {"T_max": 35},
+    #     "name": "NOWATER_GeM_semihard_s123_bs64",
+    #     "agg_arch": "GeM",
+    #     "agg_config": {"p": 3, "eps": 1e-6},
+    # },
     # 8. ConvAP, all, s123
     {
         "seed": 123, "max_epochs": 40, "batch_size": 32,
